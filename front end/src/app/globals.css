@@ -1,0 +1,179 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+    /* VibeTune Purple as primary */
+    --primary: 246 100% 69%;
+    --primary-foreground: 0 0% 100%;
+    /* Cool Mint as secondary */
+    --secondary: 187 64% 57%;
+    --secondary-foreground: 0 0% 100%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    /* Cool Mint as accent */
+    --accent: 187 64% 57%;
+    --accent-foreground: 0 0% 100%;
+    /* Coral Pink as destructive */
+    --destructive: 0 100% 71%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 246 100% 69%;
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    /* Dark Charcoal background */
+    --background: 0 0% 10%;
+    --foreground: 0 0% 98%;
+    --card: 0 0% 12%;
+    --card-foreground: 0 0% 98%;
+    --popover: 0 0% 12%;
+    --popover-foreground: 0 0% 98%;
+    /* VibeTune Purple as primary */
+    --primary: 246 100% 69%;
+    --primary-foreground: 0 0% 100%;
+    /* Cool Mint as secondary */
+    --secondary: 187 64% 57%;
+    --secondary-foreground: 0 0% 100%;
+    --muted: 0 0% 15%;
+    --muted-foreground: 0 0% 65%;
+    /* Cool Mint as accent */
+    --accent: 187 64% 57%;
+    --accent-foreground: 0 0% 100%;
+    /* Coral Pink as destructive */
+    --destructive: 0 100% 71%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 20%;
+    --input: 0 0% 15%;
+    --ring: 246 100% 69%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: hsl(var(--muted));
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground));
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--foreground));
+}
+
+/* Responsive utilities */
+@media (max-width: 768px) {
+  .hide-mobile {
+    display: none !important;
+  }
+}
+
+@media (min-width: 769px) {
+  .show-mobile {
+    display: none !important;
+  }
+}
+
+/* Improved focus styles */
+.focus-ring {
+  @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2;
+}
+
+/* Text truncation utilities */
+.line-clamp-1 {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+
+.line-clamp-2 {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.line-clamp-3 {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+/* VibeTune gradient backgrounds */
+.gradient-bg-purple {
+  background: linear-gradient(135deg, #6C63FF 0%, #8B7FFF 100%);
+}
+
+.gradient-bg-coral {
+  background: linear-gradient(135deg, #FF6B6B 0%, #FF8888 100%);
+}
+
+.gradient-bg-mint {
+  background: linear-gradient(135deg, #4ECDC4 0%, #6DD5CC 100%);
+}
+
+.gradient-bg-vibrant {
+  background: linear-gradient(135deg, #6C63FF 0%, #4ECDC4 50%, #FF6B6B 100%);
+}
+
+.gradient-text-vibrant {
+  background: linear-gradient(135deg, #6C63FF 0%, #FF6B6B 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Focus styles for accessibility */
+.focus-ring {
+  @apply focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-background;
+}
+
+/* Animations */
+@keyframes pulse-slow {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Skip to content link */
+.skip-link {
+  @apply absolute -top-10 left-4 bg-primary text-primary-foreground px-4 py-2 rounded-md z-50 transition-all;
+}
+
+.skip-link:focus {
+  @apply top-4;
+}
