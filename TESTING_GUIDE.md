@@ -14,7 +14,7 @@ cd "G:\My_Projects\Final_year\BackEnd"
 pip install -r requirements.txt
 
 # Start backend server
-uvicorn server_api:app --reload --host 0.0.0.0 --port 8000
+python -m uvicorn server_api:app --reload
 ```
 
 **Expected Output:**
