@@ -4,13 +4,13 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ FRONTEND (React/Next.js)                                         │
-│ ┌─────────────┐   ┌──────────────┐   ┌─────────────────────┐   │
-│ │ User clicks │ → │ Record audio │ → │ Capture image       │   │
-│ │ "Detect"    │   │ 7 seconds    │   │ from camera/create  │   │
-│ │             │   │ (16kHz WAV)  │   │ placeholder         │   │
-│ └─────────────┘   └──────────────┘   └─────────────────────┘   │
-│                                                 ↓                 │
+│ FRONTEND (React/Next.js)                                        │
+│ ┌─────────────┐   ┌──────────────┐   ┌─────────────────────┐    │
+│ │ User clicks │ → │ Record audio │ → │ Capture image       │    │
+│ │ "Detect"    │   │ 7 seconds    │   │ from camera/create  │    │
+│ │             │   │ (16kHz WAV)  │   │ placeholder         │    │
+│ └─────────────┘   └──────────────┘   └─────────────────────┘    │
+│                                                 ↓               │
 │                                   ┌─────────────────────────┐   │
 │                                   │ FormData with:          │   │
 │                                   │ - audio_file (Blob)     │   │
@@ -21,28 +21,28 @@
                                          │ HTTP POST
                                          ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│ BACKEND (FastAPI/Python)                                         │
+│ BACKEND (FastAPI/Python)                                        │
 │ ┌────────────────────────────────────────────────────────────┐  │
 │ │ server_api.py: /analyze-voice-and-face endpoint            │  │
-│ │ 1. Validate file types                                      │  │
-│ │ 2. Create temp files                                        │  │
+│ │ 1. Validate file types                                     │  │
+│ │ 2. Create temp files                                       │  │
 │ └────────────┬────────────────────────┬──────────────────────┘  │
-│              ↓                        ↓                          │
-│    ┌──────────────────┐     ┌──────────────────┐               │
-│    │ VOICE ANALYSIS   │     │ FACE ANALYSIS    │               │
-│    │ voice_api.py     │     │ face_expression  │               │
-│    │                  │     │                  │               │
-│    │ 1. Load audio    │     │ 1. Load image    │               │
+│              ↓                        ↓                         │
+│    ┌──────────────────┐     ┌──────────────────┐                │
+│    │ VOICE ANALYSIS   │     │ FACE ANALYSIS    │                │
+│    │ voice_api.py     │     │ face_expression  │                │
+│    │                  │     │                  │                │
+│    │ 1. Load audio    │     │ 1. Load image    │                │
 │    │ 2. Resample      │     │ 2. Check placeholder              │
-│    │ 3. Tokenize      │     │ 3. Detect face   │               │
-│    │ 4. Wav2Vec2      │     │ 4. DeepFace      │               │
-│    │ 5. Softmax       │     │ 5. Normalize     │               │
-│    │                  │     │                  │               │
-│    │ Result: happy    │     │ Result: happy    │               │
-│    │ (0.87)           │     │ (0.78)           │               │
-│    └──────────┬───────┘     └────────┬─────────┘               │
+│    │ 3. Tokenize      │     │ 3. Detect face   │                │
+│    │ 4. Wav2Vec2      │     │ 4. DeepFace      │                │
+│    │ 5. Softmax       │     │ 5. Normalize     │                │
+│    │                  │     │                  │                │
+│    │ Result: happy    │     │ Result: happy    │                │
+│    │ (0.87)           │     │ (0.78)           │                │
+│    └──────────┬───────┘     └────────┬─────────┘                │
 │               └──────────┬───────────┘                          │
-│                          ↓                                       │
+│                          ↓                                      │
 │              ┌──────────────────────┐                           │
 │              │ EMOTION FUSION       │                           │
 │              │ emotion_fusion.py    │                           │
@@ -55,7 +55,7 @@
 │              │                      │                           │
 │              │ Result: happy (0.825)│                           │
 │              └──────────┬───────────┘                           │
-│                         ↓                                        │
+│                         ↓                                       │
 │              ┌──────────────────────┐                           │
 │              │ SPOTIFY SERVICE      │                           │
 │              │ spotify_service.py   │                           │
@@ -67,7 +67,7 @@
 │              │                      │                           │
 │              │ Result: [20 tracks]  │                           │
 │              └──────────┬───────────┘                           │
-│                         ↓                                        │
+│                         ↓                                       │
 │              ┌──────────────────────┐                           │
 │              │ BUILD RESPONSE       │                           │
 │              │ {                    │                           │
@@ -80,17 +80,17 @@
                          │ HTTP Response (JSON)
                          ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│ FRONTEND (React/Next.js)                                         │
-│ ┌──────────────────────────────────────────────────────────┐   │
-│ │ Display Results:                                          │   │
-│ │ - Emoji: 😊                                               │   │
-│ │ - Emotion: HAPPY                                          │   │
-│ │ - Confidence: 82.5%                                       │   │
-│ │ - Agreement: STRONG                                       │   │
-│ │ - Voice: happy (87%)                                      │   │
-│ │ - Face: happy (78%)                                       │   │
-│ │ - Music: Grid of 20 songs with play buttons              │   │
-│ └──────────────────────────────────────────────────────────┘   │
+│ FRONTEND (React/Next.js)                                        │
+│ ┌──────────────────────────────────────────────────────────┐    │
+│ │ Display Results:                                         │    │
+│ │ - Emoji: 😊                                              |    │
+│ │ - Emotion: HAPPY                                         │    │
+│ │ - Confidence: 82.5%                                      │    │
+│ │ - Agreement: STRONG                                      │    │
+│ │ - Voice: happy (87%)                                     │    │
+│ │ - Face: happy (78%)                                      │    │
+│ │ - Music: Grid of 20 songs with play buttons              │    │
+│ └──────────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────┘
 ```
 ## 📋 Prerequisites
