@@ -243,13 +243,26 @@ async def analyze_voice_and_face(audio_file: UploadFile = File(...), image_file:
             tmp_file.write(content)
             tmp_path = tmp_file.name
         
-        face_result = face_expression.detect_expression(tmp_path)
+        try:
+            face_result = face_expression.detect_expression(tmp_path)
+        finally:
+            # Always clean up temporary file
+            try:
+                os.unlink(tmp_path)
+            except:
+                pass
         
-        # Clean up temporary file
-        os.unlink(tmp_path)
-        
+        # Check if face detection failed
         if not face_result.get("success"):
-            return face_result
+            logger.warning(f"Face detection failed: {face_result.get('error')}")
+            # Continue with voice-only analysis but note the failure
+            face_result = {
+                "success": True,
+                "emotion": "neutral",
+                "confidence": 0.3,
+                "all_emotions": {"neutral": 0.3},
+                "warning": "Face detection failed, using neutral fallback"
+            }
         
         # Merge predictions using emotion fusion service
         logger.info("🔀 Merging voice and face predictions...")

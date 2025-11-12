@@ -30,6 +30,8 @@ export function MoodDetectorPanel({ onMoodDetected, className, autoDetect = fals
   const [recommendations, setRecommendations] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [permissionDenied, setPermissionDenied] = useState(false);
+  const [hasCamera, setHasCamera] = useState<boolean | null>(null);
+  const [hasMicrophone, setHasMicrophone] = useState<boolean | null>(null);
   
   // Music player state
   const [currentTracks, setCurrentTracks] = useState<SpotifyTrack[]>([]);
@@ -48,6 +50,41 @@ export function MoodDetectorPanel({ onMoodDetected, className, autoDetect = fals
   const cameraActiveRef = useRef<boolean>(false); // Track camera state with ref
   
   const voiceService = VoiceEmotionService.getInstance();
+
+  // Check device availability on mount
+  useEffect(() => {
+    const checkDevices = async () => {
+      try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+          setHasCamera(false);
+          setHasMicrophone(false);
+          setError('Media devices not supported in this browser');
+          return;
+        }
+
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(device => device.kind === 'videoinput');
+        const audioDevices = devices.filter(device => device.kind === 'audioinput');
+        
+        setHasCamera(videoDevices.length > 0);
+        setHasMicrophone(audioDevices.length > 0);
+        
+        if (videoDevices.length === 0 && audioDevices.length === 0) {
+          setError('No camera or microphone detected. Voice-only mode will use a default neutral emotion.');
+        } else if (videoDevices.length === 0) {
+          console.log('⚠️ No camera detected - will use voice-only analysis');
+        } else if (audioDevices.length === 0) {
+          setError('No microphone detected. Please connect a microphone for mood detection.');
+        }
+      } catch (err) {
+        console.error('Failed to check devices:', err);
+        setHasCamera(null);
+        setHasMicrophone(null);
+      }
+    };
+
+    checkDevices();
+  }, []);
 
   // Cleanup preview URLs on unmount
   useEffect(() => {
@@ -90,6 +127,11 @@ export function MoodDetectorPanel({ onMoodDetected, className, autoDetect = fals
 
   // Start camera preview
   const startCamera = async () => {
+    if (hasCamera === false) {
+      setError('No camera detected on this device. Voice-only analysis will be used.');
+      return;
+    }
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'user', width: 640, height: 480 },
@@ -108,9 +150,17 @@ export function MoodDetectorPanel({ onMoodDetected, className, autoDetect = fals
       setPermissionDenied(false);
       setError(null);
     } catch (err) {
-      console.error('Camera access denied:', err);
+      console.error('Camera access error:', err);
       setPermissionDenied(true);
-      setError('Camera permission denied. Please allow camera access to detect mood.');
+      
+      if (err instanceof Error && err.name === 'NotFoundError') {
+        setError('No camera found on this device. Voice-only analysis will be used.');
+        setHasCamera(false);
+      } else if (err instanceof Error && err.name === 'NotAllowedError') {
+        setError('Camera permission denied. Please allow camera access to detect mood.');
+      } else {
+        setError('Failed to access camera. Voice-only analysis will be used.');
+      }
     }
   };
 
@@ -129,7 +179,37 @@ export function MoodDetectorPanel({ onMoodDetected, className, autoDetect = fals
 
   // Capture image from video
   const captureImage = async (): Promise<Blob | null> => {
-    if (!videoRef.current || !canvasRef.current) return null;
+    // If no camera, create a placeholder image
+    if (hasCamera === false || !videoRef.current || !cameraActive) {
+      console.log('⚠️ No camera available, creating placeholder image');
+      
+      // Create a blank canvas as placeholder
+      const canvas = document.createElement('canvas');
+      canvas.width = 640;
+      canvas.height = 480;
+      const ctx = canvas.getContext('2d');
+      
+      if (ctx) {
+        // Draw a simple placeholder
+        ctx.fillStyle = '#1a1a1a';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '20px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('No Camera Available', canvas.width / 2, canvas.height / 2);
+      }
+      
+      return new Promise<Blob>((resolve) => {
+        canvas.toBlob((blob) => {
+          const imageBlob = blob || new Blob();
+          const imageUrl = URL.createObjectURL(imageBlob);
+          setCapturedImageUrl(imageUrl);
+          resolve(imageBlob);
+        }, 'image/jpeg', 0.95);
+      });
+    }
+    
+    if (!canvasRef.current) return null;
     
     const canvas = canvasRef.current;
     const video = videoRef.current;
@@ -204,6 +284,10 @@ export function MoodDetectorPanel({ onMoodDetected, className, autoDetect = fals
 
   // Record audio
   const recordAudio = async (duration: number = 5000): Promise<Blob | null> => {
+    if (hasMicrophone === false) {
+      throw new Error('No microphone detected on this device');
+    }
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -258,15 +342,31 @@ export function MoodDetectorPanel({ onMoodDetected, className, autoDetect = fals
         }, duration);
       });
     } catch (err) {
-      console.error('Microphone access denied:', err);
-      setError('Microphone permission denied. Please allow microphone access.');
+      console.error('Microphone access error:', err);
+      
+      if (err instanceof Error && err.name === 'NotFoundError') {
+        setError('No microphone found on this device. Cannot perform mood detection.');
+        setHasMicrophone(false);
+      } else if (err instanceof Error && err.name === 'NotAllowedError') {
+        setError('Microphone permission denied. Please allow microphone access.');
+      } else {
+        setError('Failed to access microphone. Cannot perform mood detection.');
+      }
+      
       return null;
     }
   };
 
   // Detect mood (multimodal)
   const handleDetectMood = async () => {
-    if (!cameraActive) {
+    // Check if microphone is available (required)
+    if (hasMicrophone === false) {
+      setError('Microphone is required for mood detection. Please connect a microphone.');
+      return;
+    }
+
+    // Start camera if available and not active
+    if (hasCamera !== false && !cameraActive) {
       await startCamera();
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
@@ -297,7 +397,7 @@ export function MoodDetectorPanel({ onMoodDetected, className, autoDetect = fals
 
       setDetectionProgress(75);
       
-      // Capture image
+      // Capture image (or placeholder if no camera)
       const imageBlob = await captureImage();
       if (!imageBlob || imageBlob.size === 0) {
         throw new Error('Failed to capture image');
@@ -359,9 +459,26 @@ export function MoodDetectorPanel({ onMoodDetected, className, autoDetect = fals
   return (
     <Card className={cn(className)}>
       <CardHeader>
-        <CardTitle className="flex items-center space-x-2">
-          <Scan className="h-5 w-5" />
-          <span>Multimodal Mood Detection</span>
+        <CardTitle className="flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <Scan className="h-5 w-5" />
+            <span>Multimodal Mood Detection</span>
+          </div>
+          {/* Device Status Indicators */}
+          <div className="flex items-center gap-2">
+            {hasCamera !== null && (
+              <Badge variant={hasCamera ? "default" : "secondary"} className="text-xs">
+                <Video className="h-3 w-3 mr-1" />
+                {hasCamera ? 'Camera OK' : 'No Camera'}
+              </Badge>
+            )}
+            {hasMicrophone !== null && (
+              <Badge variant={hasMicrophone ? "default" : "destructive"} className="text-xs">
+                <Mic className="h-3 w-3 mr-1" />
+                {hasMicrophone ? 'Mic OK' : 'No Mic'}
+              </Badge>
+            )}
+          </div>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -511,29 +628,31 @@ export function MoodDetectorPanel({ onMoodDetected, className, autoDetect = fals
 
         {/* Control Buttons */}
         <div className="flex gap-2">
-          {!cameraActive ? (
-            <Button
-              onClick={startCamera}
-              className="flex-1"
-              variant="outline"
-            >
-              <Video className="mr-2 h-4 w-4" />
-              Start Camera
-            </Button>
-          ) : (
-            <Button
-              onClick={stopCamera}
-              className="flex-1"
-              variant="outline"
-            >
-              <X className="mr-2 h-4 w-4" />
-              Stop Camera
-            </Button>
+          {hasCamera !== false && (
+            !cameraActive ? (
+              <Button
+                onClick={startCamera}
+                className="flex-1"
+                variant="outline"
+              >
+                <Video className="mr-2 h-4 w-4" />
+                Start Camera
+              </Button>
+            ) : (
+              <Button
+                onClick={stopCamera}
+                className="flex-1"
+                variant="outline"
+              >
+                <X className="mr-2 h-4 w-4" />
+                Stop Camera
+              </Button>
+            )
           )}
           
           <Button
             onClick={handleDetectMood}
-            disabled={isDetecting || !cameraActive}
+            disabled={isDetecting || hasMicrophone === false}
             className="flex-1"
             variant="default"
           >
@@ -545,7 +664,7 @@ export function MoodDetectorPanel({ onMoodDetected, className, autoDetect = fals
             ) : (
               <>
                 <Sparkles className="mr-2 h-4 w-4" />
-                Detect Mood
+                {hasMicrophone === false ? 'No Microphone' : 'Detect Mood'}
               </>
             )}
           </Button>
@@ -620,11 +739,33 @@ export function MoodDetectorPanel({ onMoodDetected, className, autoDetect = fals
         )}
 
         {/* Instructions */}
-        <div className="text-xs text-muted-foreground space-y-1">
-          <p>• Click "Start Camera" to enable video preview</p>
-          <p>• Click "Detect Mood" to analyze your mood (takes ~7 seconds)</p>
-          <p>• Both camera and microphone will be used for best accuracy</p>
-          <p>• Music recommendations will appear automatically after detection</p>
+        <div className="text-xs text-muted-foreground space-y-1 p-3 bg-muted/30 rounded-lg">
+          <p className="font-semibold mb-2">💡 How it works:</p>
+          {hasMicrophone === false && hasCamera === false ? (
+            <>
+              <p className="text-destructive">⚠️ No camera or microphone detected</p>
+              <p>• Please connect audio/video devices to use mood detection</p>
+            </>
+          ) : hasMicrophone === false ? (
+            <>
+              <p className="text-destructive">⚠️ Microphone is required for mood detection</p>
+              <p>• Please connect a microphone to continue</p>
+            </>
+          ) : hasCamera === false ? (
+            <>
+              <p className="text-yellow-600 dark:text-yellow-400">⚠️ No camera detected - Voice-only mode</p>
+              <p>• Click "Detect Mood" to analyze your mood using voice (takes ~7 seconds)</p>
+              <p>• Facial analysis will use a neutral fallback</p>
+              <p>• Voice emotion will be weighted more heavily in the final result</p>
+            </>
+          ) : (
+            <>
+              <p>• Click "Start Camera" to enable video preview</p>
+              <p>• Click "Detect Mood" to analyze your mood (takes ~7 seconds)</p>
+              <p>• Both camera and microphone will be used for best accuracy</p>
+              <p>• Music recommendations will appear automatically after detection</p>
+            </>
+          )}
         </div>
       </CardContent>
     </Card>
