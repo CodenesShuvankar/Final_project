@@ -1,1 +1,0 @@
-# Voice model package
