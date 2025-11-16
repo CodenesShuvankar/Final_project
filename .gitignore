@@ -23,6 +23,9 @@ wheels/
 .installed.cfg
 *.egg
 !Backend/.env.example
+!Backend/video_model
+!Backend/voice_model
+!Backend/services
 # Node
 node_modules/
 npm-debug.log*
