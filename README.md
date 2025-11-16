@@ -138,6 +138,8 @@ cd VibeTune
 # Navigate to the Backend directory
 cd Backend
 
+#paste this to Backend/
+-link - https://drive.google.com/drive/folders/1qDL5Arjf2JCxPJ6_73uU_5rOBU9QSzZP?usp=sharing
 # Create and activate a Python virtual environment
 python -m venv venv
 .\venv\Scripts\Activate.ps1
