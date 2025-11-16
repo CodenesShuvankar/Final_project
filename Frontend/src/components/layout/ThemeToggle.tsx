@@ -16,7 +16,23 @@ import {
  */
 export function ThemeToggle() {
   const { theme, setTheme, getEffectiveTheme } = useThemeStore();
+  const [mounted, setMounted] = React.useState(false);
   const effectiveTheme = getEffectiveTheme();
+
+  // Avoid hydration mismatch by only rendering after mount
+  React.useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!mounted) {
+    // Return a placeholder that matches server render
+    return (
+      <Button variant="ghost" size="icon" className="focus-ring">
+        <Sun className="h-4 w-4" />
+        <span className="sr-only">Toggle theme</span>
+      </Button>
+    );
+  }
 
   return (
     <DropdownMenu>

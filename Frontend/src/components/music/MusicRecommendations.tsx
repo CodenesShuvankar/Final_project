@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import { SpotifyTrack, SpotifyMusicService, MusicRecommendationResult } from '@/lib/services/spotify';
 import { InlinePlayer } from '@/components/music/InlinePlayer';
 import { cn } from '@/lib/utils';
+import { supabase } from '@/lib/supabaseClient';
 
 interface MusicRecommendationsProps {
   detectedMood?: string;
@@ -27,15 +28,62 @@ export function MusicRecommendations({
   const [isLoading, setIsLoading] = useState(false);
   const [currentMood, setCurrentMood] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [languagePriorities, setLanguagePriorities] = useState<string[]>(['English']);
   
   const spotifyService = SpotifyMusicService.getInstance();
+
+  // Load language priorities on mount
+  useEffect(() => {
+    loadLanguagePriorities();
+  }, []);
+
+  const loadLanguagePriorities = async (): Promise<string[]> => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        console.log('📝 No session, using default language');
+        return ['English'];
+      }
+
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+      const response = await fetch(`${apiUrl}/api/user-preferences`, {
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log('🔍 API Response for language priorities:', data);
+        if (data.preferences?.language_priorities && data.preferences.language_priorities.length > 0) {
+          const priorities = data.preferences.language_priorities;
+          setLanguagePriorities(priorities);
+          console.log('✅ Loaded language priorities for recommendations:', priorities);
+          return priorities;
+        } else {
+          console.log('⚠️ No language_priorities in response, using default English');
+          setLanguagePriorities(['English']);
+          return ['English'];
+        }
+      } else {
+        console.error('❌ Failed to load preferences, status:', response.status);
+        return ['English'];
+      }
+    } catch (error) {
+      console.error('Failed to load language priorities:', error);
+      return ['English'];
+    }
+  };
 
   // Auto-load recommendations when mood is detected
   useEffect(() => {
     console.log('🎵 MusicRecommendations: useEffect triggered - detectedMood:', detectedMood, 'currentMood:', currentMood);
     if (detectedMood && detectedMood !== currentMood) {
       console.log('🎵 MusicRecommendations: Mood changed, loading recommendations for:', detectedMood);
-      loadMoodRecommendations(detectedMood);
+      // Reload language priorities in case they changed, then use returned value
+      loadLanguagePriorities().then((priorities) => {
+        loadMoodRecommendations(detectedMood, priorities);
+      });
     } else if (detectedMood) {
       console.log('🎵 MusicRecommendations: Mood same as current, not reloading');
     } else {
@@ -43,15 +91,20 @@ export function MusicRecommendations({
     }
   }, [detectedMood]);
 
-  const loadMoodRecommendations = async (mood: string) => {
+  const loadMoodRecommendations = async (mood: string, priorities?: string[]) => {
     console.log('🎼 MusicRecommendations: loadMoodRecommendations called with mood:', mood);
     setIsLoading(true);
     setError(null);
     setCurrentMood(mood);
 
     try {
-      console.log('🔍 MusicRecommendations: Calling spotifyService.getMoodRecommendations...');
-      const result = await spotifyService.getMoodRecommendations(mood, 20);
+      // Use provided priorities or fall back to state
+      const langs = priorities || languagePriorities;
+      const primaryLanguage = langs[0] || 'English';
+      const searchQuery = `${mood} ${primaryLanguage}`;
+      console.log('🔍 MusicRecommendations: Searching with language priority:', searchQuery, '(from priorities:', langs, ')');
+      
+      const result = await spotifyService.getMoodRecommendations(searchQuery, 20);
       console.log('📊 MusicRecommendations: Mood recommendations result:', result);
       if (result) {
         // Handle different response structures
@@ -63,7 +116,7 @@ export function MusicRecommendations({
         } else {
           console.error('Unexpected result structure:', result);
         }
-        console.log('✅ MusicRecommendations: Setting tracks:', tracks.length, 'tracks found');
+        console.log('✅ MusicRecommendations: Setting tracks:', tracks.length, 'tracks found for', primaryLanguage);
         setTracks(tracks);
       } else {
         console.log('❌ MusicRecommendations: No result received');

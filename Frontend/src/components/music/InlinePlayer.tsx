@@ -6,6 +6,8 @@ import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { AudioPlayerService, AudioPlayerState } from '@/lib/services/audioPlayer';
 import { SpotifyMusicService } from '@/lib/services/spotify';
+import { HistoryService } from '@/lib/services/historyService';
+import { supabase } from '@/lib/supabaseClient';
 import { cn } from '@/lib/utils';
 
 interface InlinePlayerProps {
@@ -16,6 +18,8 @@ interface InlinePlayerProps {
     preview_url: string | null;
     image_url: string | null;
     external_urls?: { spotify?: string };
+    album?: string;
+    duration_ms?: number;
   };
   className?: string;
   showVolumeControl?: boolean;
@@ -29,6 +33,7 @@ export function InlinePlayer({
   showExternalLink = true,
 }: InlinePlayerProps) {
   const [playerState, setPlayerState] = useState<AudioPlayerState | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const audioPlayer = AudioPlayerService.getInstance();
   const spotifyService = SpotifyMusicService.getInstance();
 
@@ -36,15 +41,50 @@ export function InlinePlayer({
   const isPlaying = isCurrentTrack && playerState?.isPlaying;
 
   useEffect(() => {
+    const checkAuth = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      setIsAuthenticated(!!session);
+    };
+    checkAuth();
+
     const unsubscribe = audioPlayer.subscribe(setPlayerState);
     setPlayerState(audioPlayer.getState());
     return unsubscribe;
   }, [audioPlayer]);
 
   const handlePlayToggle = async () => {
-    console.log('Play button clicked for track:', track.name);
+    console.log('🎵 Play button clicked for track:', track.name);
     console.log('Preview URL:', track.preview_url);
-    console.log('External URLs:', track.external_urls);
+    console.log('Is authenticated:', isAuthenticated);
+    console.log('Is current track:', isCurrentTrack);
+    
+    // Track in listening history FIRST (before any early returns)
+    if (isAuthenticated && !isCurrentTrack) {
+      try {
+        console.log('📝 Tracking song in listening history...');
+        const artistNames = Array.isArray(track.artists) ? track.artists.join(', ') : track.artists;
+        const success = await HistoryService.addToHistory(
+          track.id,
+          track.name,
+          artistNames,
+          track.album,
+          track.image_url || undefined,
+          track.external_urls?.spotify,
+          track.duration_ms,
+          false // not completed yet
+        );
+        console.log('✅ History tracked successfully:', success);
+      } catch (error) {
+        console.error('❌ Failed to track listening history:', error);
+      }
+    } else {
+      if (!isAuthenticated) {
+        console.log('⚠️ User not authenticated, skipping history tracking');
+      }
+      if (isCurrentTrack) {
+        console.log('⚠️ Already current track, skipping history tracking');
+      }
+    }
     
     if (!track.preview_url) {
       console.log('No preview URL available, opening Spotify');

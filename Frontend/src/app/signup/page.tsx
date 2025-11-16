@@ -19,6 +19,7 @@ export default function SignupPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [dateOfBirth, setDateOfBirth] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -42,10 +43,15 @@ export default function SignupPage() {
 
     try {
       const authService = AuthService.getInstance();
-      const result = await authService.signup({ displayName, email, password });
+      const result = await authService.signup({ 
+        displayName, 
+        email, 
+        password,
+        dateOfBirth 
+      });
       
       if (result.success) {
-        router.push('/');
+        router.push('/profile');
       } else {
         setError(result.error || 'Signup failed');
       }
@@ -121,6 +127,21 @@ export default function SignupPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 required
                 className="focus-ring"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label htmlFor="dateOfBirth" className="text-sm font-medium">
+                Date of Birth
+              </label>
+              <Input
+                id="dateOfBirth"
+                type="date"
+                value={dateOfBirth}
+                onChange={(e) => setDateOfBirth(e.target.value)}
+                required
+                className="focus-ring"
+                max={new Date().toISOString().split('T')[0]}
               />
             </div>
             

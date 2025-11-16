@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { useState, useEffect } from 'react';
-import { Heart, Clock, Music, Users, Plus } from 'lucide-react';
+import { Heart, Clock, Music, Users, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SongCard } from '@/components/music/SongCard';
@@ -91,6 +91,22 @@ export default function LibraryPage() {
     }
   };
 
+  const handleDeletePlaylist = async (playlistId: string) => {
+    if (!confirm('Are you sure you want to delete this playlist?')) {
+      return;
+    }
+
+    try {
+      await LibraryService.deletePlaylist(playlistId);
+      // Refresh playlists
+      const updatedPlaylists = await LibraryService.getPlaylists();
+      setPlaylists(updatedPlaylists);
+    } catch (error) {
+      console.error('Failed to delete playlist:', error);
+      alert('Failed to delete playlist. Please try again.');
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -151,7 +167,7 @@ export default function LibraryPage() {
                 </p>
               </div>
             ) : (
-              <div className="space-y-2">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {likedSongs.map((track: any) => (
                   <SongCard
                     key={track.id}
@@ -242,11 +258,20 @@ export default function LibraryPage() {
             ) : (
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {playlists.map((playlist: any) => (
-                  <PlaylistCard
-                    key={playlist.id}
-                    playlist={playlist}
-                    onPlay={() => console.log('Play playlist:', playlist.id)}
-                  />
+                  <div key={playlist.id} className="relative group">
+                    <PlaylistCard
+                      playlist={playlist}
+                      onPlay={() => console.log('Play playlist:', playlist.id)}
+                    />
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity bg-background/80 hover:bg-background text-destructive hover:text-destructive"
+                      onClick={() => handleDeletePlaylist(playlist.id)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 ))}
               </div>
             )}

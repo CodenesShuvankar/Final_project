@@ -22,7 +22,7 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-
+!Backend/.env.example
 # Node
 node_modules/
 npm-debug.log*
@@ -83,3 +83,7 @@ Thumbs.db
 *.dll
 *.so
 *.dylib
+
+#frontend library folder
+!Frontend/src/lib/
+!Frontend/.env.example

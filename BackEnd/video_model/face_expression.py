@@ -14,6 +14,7 @@ def detect_expression(image_path):
     Returns:
         Dictionary with emotion detection results
     """
+    logger.info("Its True")
     try:
         # Check if image is a placeholder (no camera available)
         img = cv2.imread(image_path)

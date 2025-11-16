@@ -9,13 +9,14 @@ import { cn } from '@/lib/utils';
 import { Track, Playlist } from '@/lib/mockData';
 import { usePlayerStore } from '@/lib/store/playerStore';
 import { LibraryService } from '@/lib/services/library';
+import { LikedSongsService } from '@/lib/services/likedSongs';
+import { HistoryService } from '@/lib/services/historyService';
+import { supabase } from '@/lib/supabaseClient';
 import Image from 'next/image';
 
 interface SongCardProps {
   track: Track;
   onPlay?: () => void;
-  onToggleLike?: () => void;
-  isLiked?: boolean;
   showArtist?: boolean;
   showAlbum?: boolean;
   compact?: boolean;
@@ -28,18 +29,110 @@ interface SongCardProps {
 export function SongCard({ 
   track, 
   onPlay, 
-  onToggleLike,
-  isLiked,
   showArtist = false, 
   showAlbum = false,
   compact = false,
   className 
 }: SongCardProps) {
-  const { currentTrack, isPlaying } = usePlayerStore();
+  const { currentTrack, isPlaying, playerService } = usePlayerStore();
   const isCurrentTrack = currentTrack?.id === track.id;
   const [showPlaylistMenu, setShowPlaylistMenu] = useState(false);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [isAddingToPlaylist, setIsAddingToPlaylist] = useState(false);
+  const [isLiked, setIsLiked] = useState(false);
+  const [isCheckingLiked, setIsCheckingLiked] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  
+  const likedSongsService = LikedSongsService.getInstance();
+
+  // Check authentication
+  useEffect(() => {
+    const checkAuth = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      setIsAuthenticated(!!session);
+    };
+    checkAuth();
+  }, []);
+
+  // Check if song is liked
+  useEffect(() => {
+    const checkLikedStatus = async () => {
+      if (!isAuthenticated) {
+        setIsCheckingLiked(false);
+        return;
+      }
+      
+      const liked = await likedSongsService.isLiked(track.id);
+      setIsLiked(liked);
+      setIsCheckingLiked(false);
+    };
+
+    checkLikedStatus();
+  }, [track.id, isAuthenticated]);
+
+  // Listen for like/unlike events
+  useEffect(() => {
+    const handleSongLiked = (event: CustomEvent) => {
+      if (event.detail.songId === track.id) {
+        setIsLiked(event.detail.liked);
+      }
+    };
+
+    window.addEventListener('songLiked', handleSongLiked as EventListener);
+    return () => {
+      window.removeEventListener('songLiked', handleSongLiked as EventListener);
+    };
+  }, [track.id]);
+
+  const handlePlay = async () => {
+    if (onPlay) {
+      onPlay();
+    } else {
+      // Use player service to play track
+      playerService.playTrack(track);
+    }
+    
+    // Track in listening history
+    if (isAuthenticated) {
+      try {
+        await HistoryService.addToHistory(
+          track.id,
+          track.title,
+          track.artist,
+          track.album,
+          track.coverUrl,
+          undefined, // spotify_url
+          track.duration ? track.duration * 1000 : undefined,
+          false // not completed yet
+        );
+      } catch (error) {
+        console.error('Failed to track listening history:', error);
+      }
+    }
+  };
+
+  const handleToggleLike = async (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    
+    if (!isAuthenticated) {
+      alert('Please login to like songs');
+      return;
+    }
+
+    const success = await likedSongsService.toggleLike(
+      track.id,
+      track.title,
+      track.artist,
+      track.album,
+      track.coverUrl,
+      undefined, // spotify_url
+      track.duration ? track.duration * 1000 : undefined
+    );
+
+    if (success) {
+      setIsLiked(!isLiked);
+    }
+  };
 
   // Load playlists when menu is opened
   useEffect(() => {
@@ -49,6 +142,11 @@ export function SongCard({
   }, [showPlaylistMenu]);
 
   const loadPlaylists = async () => {
+    if (!isAuthenticated) {
+      alert('Please login to add songs to playlists');
+      return;
+    }
+    
     try {
       const userPlaylists = await LibraryService.getPlaylists();
       setPlaylists(userPlaylists);
@@ -101,7 +199,7 @@ export function SongCard({
               variant="ghost"
               size="icon"
               className="h-6 w-6 text-white hover:bg-white/20"
-              onClick={onPlay}
+              onClick={handlePlay}
             >
               {isCurrentTrack && isPlaying ? (
                 <Pause className="h-3 w-3" />
@@ -130,19 +228,23 @@ export function SongCard({
             size="icon"
             className={cn(
               "h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity",
-              isLiked && "opacity-100 text-primary"
+              isLiked && "opacity-100 text-red-500"
             )}
-            onClick={onToggleLike}
+            onClick={handleToggleLike}
+            disabled={isCheckingLiked}
           >
             <Heart className={cn("h-3 w-3", isLiked && "fill-current")} />
-            <span className="sr-only">Like song</span>
+            <span className="sr-only">{isLiked ? 'Unlike' : 'Like'} song</span>
           </Button>
           <div className="relative">
             <Button 
               variant="ghost" 
               size="icon" 
               className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
-              onClick={() => setShowPlaylistMenu(!showPlaylistMenu)}
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowPlaylistMenu(!showPlaylistMenu);
+              }}
             >
               <Plus className="h-3 w-3" />
               <span className="sr-only">Add to playlist</span>
@@ -150,8 +252,8 @@ export function SongCard({
             
             {/* Playlist Modal Popup - Compact View */}
             {showPlaylistMenu && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-                <div className="bg-background border rounded-lg shadow-xl w-full max-w-md max-h-[80vh] flex flex-col">
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowPlaylistMenu(false)}>
+                <div className="bg-background border rounded-lg shadow-xl w-full max-w-md max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
                   <div className="p-4 border-b flex items-center justify-between">
                     <h3 className="text-lg font-semibold">Add to Playlist</h3>
                     <Button
@@ -235,7 +337,7 @@ export function SongCard({
               variant="ghost"
               size="icon"
               className="h-12 w-12 bg-primary text-primary-foreground hover:bg-primary/90 rounded-full"
-              onClick={onPlay}
+              onClick={handlePlay}
             >
               {isCurrentTrack && isPlaying ? (
                 <Pause className="h-6 w-6" />
@@ -277,19 +379,23 @@ export function SongCard({
               size="icon"
               className={cn(
                 "h-6 w-6",
-                isLiked && "text-primary"
+                isLiked && "text-red-500"
               )}
-              onClick={onToggleLike}
+              onClick={handleToggleLike}
+              disabled={isCheckingLiked}
             >
               <Heart className={cn("h-3 w-3", isLiked && "fill-current")} />
-              <span className="sr-only">Like song</span>
+              <span className="sr-only">{isLiked ? 'Unlike' : 'Like'} song</span>
             </Button>
             <div className="relative">
               <Button 
                 variant="ghost" 
                 size="icon" 
                 className="h-6 w-6"
-                onClick={() => setShowPlaylistMenu(!showPlaylistMenu)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowPlaylistMenu(!showPlaylistMenu);
+                }}
               >
                 <Plus className="h-3 w-3" />
                 <span className="sr-only">Add to playlist</span>
@@ -297,8 +403,8 @@ export function SongCard({
               
               {/* Playlist Modal Popup */}
               {showPlaylistMenu && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-                  <div className="bg-background border rounded-lg shadow-xl w-full max-w-md max-h-[80vh] flex flex-col">
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowPlaylistMenu(false)}>
+                  <div className="bg-background border rounded-lg shadow-xl w-full max-w-md max-h-[80vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
                     <div className="p-4 border-b flex items-center justify-between">
                       <h3 className="text-lg font-semibold">Add to Playlist</h3>
                       <Button

@@ -180,6 +180,26 @@ def predict_emotion(audio_data, model, processor) -> Tuple[str, float, Dict[str,
         Tuple of (predicted_emotion, confidence, all_emotions_dict)
     """
     try:
+        # Check if audio has enough energy (not silence)
+        audio_energy = np.sqrt(np.mean(audio_data**2))  # RMS energy
+        audio_max = np.max(np.abs(audio_data))
+        
+        logger.info(f"Audio energy: {audio_energy:.6f}, max amplitude: {audio_max:.6f}")
+        
+        # If audio is too quiet (likely silence or background noise), return neutral with low confidence
+        # Increased thresholds to better detect silence/background noise
+        if audio_energy < 0.15 or audio_max < 0.3:
+            logger.warning(f"Audio too quiet (energy: {audio_energy:.6f}, max: {audio_max:.6f}) - likely silence or background noise, returning neutral")
+            return "neutral", 0.3, {
+                "neutral": 0.3,
+                "happy": 0.15,
+                "sad": 0.15,
+                "angry": 0.1,
+                "fear": 0.1,
+                "disgust": 0.1,
+                "surprise": 0.1
+            }
+        
         # Prepare inputs
         inputs = processor(
             audio_data,

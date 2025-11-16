@@ -1,0 +1,25 @@
+{
+  "name": "vibetune-fullstack",
+  "version": "1.0.0",
+  "description": "Music recommendation app with ML emotion detection",
+  "scripts": {
+    "dev": "concurrently \"npm run backend\" \"npm run frontend\"",
+    "backend": "cd BackEnd && python -m uvicorn server_api:app --reload --host 0.0.0.0 --port 8000",
+    "frontend": "cd Frontend && npm run dev",
+    "install-all": "cd Frontend && npm install && cd ../BackEnd && pip install -r requirements.txt",
+    "build": "cd Frontend && npm run build"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.0"
+  },
+  "keywords": [
+    "music",
+    "emotion-detection",
+    "ml",
+    "fastapi",
+    "nextjs",
+    "supabase"
+  ],
+  "author": "",
+  "license": "MIT"
+}

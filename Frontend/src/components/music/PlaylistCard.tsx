@@ -30,6 +30,14 @@ export function PlaylistCard({
 }: PlaylistCardProps) {
   const { isPlaying } = usePlayerStore();
 
+  // Debug logging
+  console.log('📀 PlaylistCard received:', { 
+    id: playlist.id, 
+    title: playlist.title, 
+    trackCount: playlist.trackCount,
+    duration: playlist.duration 
+  });
+
   const formatDuration = (seconds: number) => {
     const hours = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);

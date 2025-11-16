@@ -1,7 +1,8 @@
 'use client';
 
 import * as React from 'react';
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { Search, Loader2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -19,6 +20,7 @@ import { Button } from '@/components/ui/button';
  * Search page with tabs for different content types
  */
 export default function SearchPage() {
+  const searchParams = useSearchParams();
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SpotifyTrack[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -41,6 +43,15 @@ export default function SearchPage() {
       }
     }
   }, []);
+
+  // Get search query from URL params
+  useEffect(() => {
+    const urlQuery = searchParams.get('q');
+    if (urlQuery && urlQuery !== query) {
+      setQuery(urlQuery);
+      performSearch(urlQuery);
+    }
+  }, [searchParams]);
 
   const convertSpotifyTrackToTrack = (track: SpotifyTrack) => ({
     id: track.id,
@@ -72,9 +83,9 @@ export default function SearchPage() {
     }
   };
 
-  // Search with Spotify API
+  // Search via backend API
   const performSearch = useCallback(async (searchQuery: string) => {
-    console.log('performSearch called with query:', searchQuery);
+    console.log('🔍 performSearch called with query:', searchQuery);
     
     if (!searchQuery.trim()) {
       console.log('Empty query, clearing results');
@@ -88,6 +99,7 @@ export default function SearchPage() {
     setHasSearched(true);
     
     try {
+      // SpotifyService now routes through backend
       const result = await spotifyService.searchMusic(searchQuery, 20);
       console.log('Search result:', result);
       if (result) {
@@ -168,29 +180,6 @@ export default function SearchPage() {
           </CardContent>
         </Card>
       )}
-
-      {/* Search Input */}
-      <div className="max-w-md">
-        <div className="relative flex space-x-2">
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="What do you want to listen to?"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={handleKeyDown}
-              className="pl-10 bg-muted border-0 focus-visible:ring-1"
-            />
-          </div>
-          <Button onClick={handleSearch} disabled={isLoading}>
-            {isLoading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Search className="h-4 w-4" />
-            )}
-          </Button>
-        </div>
-      </div>
 
       {!query ? (
         /* Browse Categories */

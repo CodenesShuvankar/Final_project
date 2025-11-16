@@ -1,30 +1,67 @@
 'use client';
 
 import * as React from 'react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { MoodDetectorPanel } from '@/components/mood/MoodDetectorPanelIntegrated';
 import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { MultimodalAnalysis } from '@/lib/services/voiceEmotion';
-import { Lightbulb, Settings } from 'lucide-react';
+import { MoodAnalysisService } from '@/lib/services/moodAnalysisService';
+import { Lightbulb, Settings, Loader2 } from 'lucide-react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
+import { AuthService } from '@/lib/services/auth';
 
 /**
  * Mood detection page with integrated multimodal analysis
  */
 export default function MoodPage() {
+  const router = useRouter();
   const [currentMood, setCurrentMood] = useState<string | null>(null);
   const [currentAnalysis, setCurrentAnalysis] = useState<MultimodalAnalysis | null>(null);
   const [autoApplyToSuggest, setAutoApplyToSuggest] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isChecking, setIsChecking] = useState(true);
 
-  const handleMoodDetected = (mood: string, analysis?: MultimodalAnalysis) => {
+  useEffect(() => {
+    checkAuth();
+  }, []);
+
+  const checkAuth = async () => {
+    try {
+      const authService = AuthService.getInstance();
+      const user = await authService.getUserProfile();
+      
+      if (!user) {
+        router.push('/login?redirect=/mood');
+        return;
+      }
+      
+      setIsAuthenticated(true);
+    } catch (error) {
+      console.error('Auth check failed:', error);
+      router.push('/login?redirect=/mood');
+    } finally {
+      setIsChecking(false);
+    }
+  };
+
+  const handleMoodDetected = async (mood: string, analysis?: MultimodalAnalysis) => {
     setCurrentMood(mood);
     setCurrentAnalysis(analysis || null);
     
+    // Note: Backend now automatically stores mood analysis when authenticated
+    // No need for manual storage call here
+    console.log('✅ Mood detected:', mood, '- Backend will auto-store if authenticated');
+    
     if (autoApplyToSuggest) {
-      // Store mood for suggest page
-      localStorage.setItem('detected_mood', mood);
+      // Store mood for suggest page (localStorage for quick access)
+      const moodData = {
+        mood: mood,
+        timestamp: new Date().toISOString()
+      };
+      localStorage.setItem('detected_mood', JSON.stringify(moodData));
       if (analysis) {
         localStorage.setItem('mood_analysis', JSON.stringify(analysis));
       }
@@ -34,6 +71,21 @@ export default function MoodPage() {
       console.log('🎯 Mood manually detected and event dispatched:', mood);
     }
   };
+
+  if (isChecking) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center">
+          <Loader2 className="h-12 w-12 animate-spin mx-auto text-primary" />
+          <p className="mt-4 text-muted-foreground">Verifying authentication...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return null;
+  }
 
   return (
     <div className="p-6 space-y-8">

@@ -31,7 +31,7 @@ export default function LoginPage() {
       const result = await authService.login({ email, password });
       
       if (result.success) {
-        router.push('/');
+        router.push('/profile');
       } else {
         setError(result.error || 'Login failed');
       }

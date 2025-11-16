@@ -1,0 +1,154 @@
+// Prisma Schema for VibeTune
+// Database: PostgreSQL (Supabase)
+// Auth: Supabase Auth
+
+generator client {
+  provider = "prisma-client-py"
+  interface = "asyncio"
+  previewFeatures = ["multiSchema"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schemas  = ["auth", "public"]
+}
+
+// =============================================
+// USER MODEL
+// Maps to Supabase auth.users table
+// =============================================
+model User {
+  id            String   @id @db.Uuid
+  email         String   @unique
+  created_at    DateTime @default(now()) @map("created_at")
+  updated_at    DateTime @updatedAt @map("updated_at")
+  
+  // Relations
+  playlists     Playlist[]
+  history       ListeningHistory[]
+  
+  @@map("users")
+  @@schema("auth")
+}
+
+// =============================================
+// PLAYLIST MODEL
+// User's custom playlists
+// =============================================
+model Playlist {
+  id            String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id       String   @map("user_id") @db.Uuid
+  name          String
+  description   String?
+  cover_url     String?  @map("cover_url")
+  is_public     Boolean  @default(false) @map("is_public")
+  created_at    DateTime @default(now()) @map("created_at")
+  updated_at    DateTime @updatedAt @map("updated_at")
+  
+  // Relations
+  user          User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  songs         PlaylistSong[]
+  
+  @@index([user_id])
+  @@index([created_at(sort: Desc)])
+  @@map("playlists")
+  @@schema("public")
+}
+
+// =============================================
+// PLAYLIST SONG MODEL
+// Songs within playlists
+// =============================================
+model PlaylistSong {
+  id            String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  playlist_id   String   @map("playlist_id") @db.Uuid
+  song_id       String   @map("song_id")
+  song_name     String   @map("song_name")
+  artist_name   String   @map("artist_name")
+  album_name    String?  @map("album_name")
+  duration_ms   Int?     @map("duration_ms")
+  image_url     String?  @map("image_url")
+  spotify_url   String?  @map("spotify_url")
+  preview_url   String?  @map("preview_url")
+  position      Int      @default(0)
+  added_at      DateTime @default(now()) @map("added_at")
+  
+  // Relations
+  playlist      Playlist @relation(fields: [playlist_id], references: [id], onDelete: Cascade)
+  
+  @@index([playlist_id])
+  @@index([added_at(sort: Desc)])
+  @@unique([playlist_id, song_id])
+  @@map("playlist_songs")
+  @@schema("public")
+}
+
+// =============================================
+// LISTENING HISTORY MODEL
+// Track what users listen to
+// =============================================
+model ListeningHistory {
+  id            String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id       String   @map("user_id") @db.Uuid
+  song_id       String   @map("song_id")
+  song_name     String   @map("song_name")
+  artist_name   String   @map("artist_name")
+  album_name    String?  @map("album_name")
+  image_url     String?  @map("image_url")
+  spotify_url   String?  @map("spotify_url")
+  played_at     DateTime @default(now()) @map("played_at")
+  duration_ms   Int?     @map("duration_ms")
+  completed     Boolean  @default(false)
+  mood_detected String?  @map("mood_detected")
+  
+  // Relations
+  user          User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  
+  @@index([user_id])
+  @@index([played_at(sort: Desc)])
+  @@index([user_id, played_at(sort: Desc)])
+  @@map("listening_history")
+  @@schema("public")
+}
+
+// =============================================
+// MOOD ANALYSIS MODEL
+// Store mood detection results
+// =============================================
+model MoodAnalysis {
+  id                String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id           String   @map("user_id") @db.Uuid
+  detected_mood     String   @map("detected_mood")
+  confidence        Float
+  voice_emotion     String?  @map("voice_emotion")
+  voice_confidence  Float?   @map("voice_confidence")
+  face_emotion      String?  @map("face_emotion")
+  face_confidence   Float?   @map("face_confidence")
+  agreement         String?
+  analysis_type     String   @map("analysis_type") // "voice", "face", "multimodal"
+  created_at        DateTime @default(now()) @map("created_at")
+  
+  @@index([user_id])
+  @@index([created_at(sort: Desc)])
+  @@map("mood_analysis")
+  @@schema("public")
+}
+
+// =============================================
+// USER PREFERENCES MODEL
+// Store user settings and preferences
+// =============================================
+model UserPreference {
+  id                    String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id               String   @unique @map("user_id") @db.Uuid
+  theme                 String   @default("system")
+  auto_mood_detection   Boolean  @default(false) @map("auto_mood_detection")
+  explicit_content      Boolean  @default(true) @map("explicit_content")
+  preferred_genres      String[] @map("preferred_genres")
+  created_at            DateTime @default(now()) @map("created_at")
+  updated_at            DateTime @updatedAt @map("updated_at")
+  
+  @@map("user_preferences")
+  @@schema("public")
+}
