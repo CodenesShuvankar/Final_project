@@ -33,7 +33,7 @@ This diagram shows the end-to-end flow, from user interaction on the frontend to
 │ components/mood/MoodDetectorPanelIntegrated.tsx                 │
 │ ┌─────────────┐   ┌──────────────┐   ┌─────────────────────┐    │
 │ │ User clicks │ → │ Record audio │ → │ Capture image       │    │
-│ │ "Detect"    │   │ (7s, 16kHz WAV)│   │ from <video> stream │    │
+│ │ "Detect"    │   │ (7s, 16kHz WAV)│ │ from <video> stream │    │
 │ └─────────────┘   └──────────────┘   └─────────────────────┘    │
 │                                                 ↓               │
 │                                   ┌─────────────────────────┐   │
@@ -71,7 +71,7 @@ This diagram shows the end-to-end flow, from user interaction on the frontend to
 │                          ↓                                      │
 │              ┌──────────────────────┐                           │
 │              │ EMOTION FUSION       │                           │
-│              │ services/emotion_fusion.py                        │
+│              │ services/emotion_fusion.py                       │
 │              │                      │                           │
 │              │ 1. Get agreement     │ → "Strong"                │
 │              │ 2. Calc weights      │ → (0.55, 0.45)            │
@@ -81,10 +81,10 @@ This diagram shows the end-to-end flow, from user interaction on the frontend to
 │                         ↓                                       │
 │              ┌──────────────────────┐                           │
 │              │ SPOTIFY SERVICE      │                           │
-│              │ services/spotify_service.py                       │
+│              │ services/spotify_service.py                      │
 │              │                      │                           │
 │              │ 1. Get lang priority │ → routes/user_preferences.py │
-│              │ 2. Map mood→params │ → valence, energy, etc.   │
+│              │ 2. Map mood→params   │ → valence, energy, etc.   │
 │              │ 3. API request       │ → RapidAPI (Spotify)      │
 │              │ 4. Parse tracks      │ → 20 tracks               │
 │              └──────────┬───────────┘                           │
@@ -120,7 +120,7 @@ Follow these steps to set up and run the project locally.
 ### Prerequisites
 
 - **Node.js**: v18.0 or higher
-- **Python**: v3.9 or higher
+- **Python**: v3.12.9 
 - **Git**: For cloning the repository
 - **Supabase Account**: For database and authentication (free tier is sufficient)
 - **RapidAPI Account**: With a subscription to the Spotify API
@@ -277,11 +277,3 @@ A comprehensive testing guide with detailed scenarios for every feature can be f
 
 ---
 
-## 🤝 Contributing
-
-Contributions are welcome! Please fork the repository, create a feature branch, and open a pull request.
-
----
-## 📄 License
-
-This project is licensed under the MIT License.
