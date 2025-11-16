@@ -50,7 +50,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Model path (use raw string for Windows paths)
-model_path = r"G:\My_Projects\Final_year\BackEnd\voice_model\final_voice_model"
+model_path = Path(__file__).parent / "voice_model" / "final_voice_model"
 
 # Initialize Spotify service
 spotify_service = SpotifyService()
