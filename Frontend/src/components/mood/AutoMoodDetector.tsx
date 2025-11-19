@@ -135,7 +135,7 @@ export function AutoMoodDetector() {
             const age = Date.now() - moodTimestamp;
             
             // If mood is less than 15 minutes old, skip detection
-            if (age < 15 * 60 * 1000) {
+            if (age < 29 * 60 * 1000) {
               console.log('✅ Fresh mood data exists (', Math.floor(age / 60000), 'min old), skipping initial detection');
               return;
             } else {

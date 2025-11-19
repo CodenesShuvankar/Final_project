@@ -248,10 +248,16 @@ class VoiceEmotionServiceImpl {
         return "😊"
       case "sad":
         return "😢"
-      case "energetic":
-        return "⚡"
-      case "calm":
-        return "🧘"
+      case "angry":
+        return "😠"
+      case "neutral":
+        return "😐"
+      case "fear":
+        return "😨"
+      case "disgust":
+        return "🤢"
+      case "surprise":
+        return "😲"
       case "focus":
         return "🎯"
       case "romantic":
@@ -349,10 +355,16 @@ class VoiceEmotionServiceImpl {
         return ["Upbeat pop anthems", "Feel-good dance tracks", "Bright indie tunes"]
       case "sad":
         return ["Warm acoustic ballads", "Ambient piano pieces", "Reflective lo-fi beats"]
-      case "energetic":
-        return ["High-tempo electronic", "Driving alt-rock", "Motivational hip-hop"]
-      case "calm":
-        return ["Gentle lo-fi instrumentals", "Smooth jazz evenings", "Rainy day acoustics"]
+      case "angry":
+        return ["High-energy rock", "Intense metal tracks", "Aggressive hip-hop"]
+      case "neutral":
+        return ["Balanced pop songs", "Easy-listening tracks", "Versatile playlists"]
+      case "fear":
+        return ["Calming ambient", "Soothing classical", "Peaceful instrumentals"]
+      case "disgust":
+        return ["Alternative rock", "Punk anthems", "Raw indie tracks"]
+      case "surprise":
+        return ["Unexpected electronic", "Dynamic pop", "Genre-bending tracks"]
       case "focus":
         return ["Deep focus electronica", "Soft piano concentration", "Low-key ambient textures"]
       case "chill":

@@ -110,7 +110,7 @@ export class AuthService {
         localStorage.removeItem('detected_mood_history');
         
         // Clear cached music data
-        const moods = ['happy', 'sad', 'angry', 'calm', 'energetic', 'neutral', 'fear', 'surprise', 'disgust'];
+        const moods = ['happy', 'sad', 'angry', 'neutral', 'fear', 'surprise', 'disgust'];
         moods.forEach(mood => {
           localStorage.removeItem(`cached_recommendations_${mood}`);
         });

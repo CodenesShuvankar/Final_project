@@ -23,9 +23,7 @@ class SpotifyService:
         'neutral': 'chill indie songs',
         'fear': 'dark ambient songs',
         'disgust': 'punk grunge songs',
-        'surprise': 'energetic electronic songs',
-        'calm': 'relaxing calm songs',
-        'excited': 'energetic party songs',
+        'surprise': 'exciting uplifting songs',
     }
     
     def __init__(self):
@@ -153,23 +151,29 @@ class SpotifyService:
         
         return tracks
     
-    def get_general_recommendations(self, limit: int = 20) -> List[Dict]:
+    def get_general_recommendations(self, limit: int = 20, language: str = None) -> List[Dict]:
         """
         Get general music recommendations for home page
         
         Args:
             limit: Maximum number of recommendations
+            language: Optional language preference (e.g., 'Bengali', 'Hindi', 'English')
             
         Returns:
             List of recommended track information
         """
         try:
-            # Search for popular/trending songs
-            query = "top hits 2024"
+            # Search for popular/trending songs with language preference
+            if language and language.lower() != 'english':
+                query = f"trending {language} songs 2025"
+                logger.info(f"Searching for trending songs in {language}")
+            else:
+                query = "top hits 2025"
+            
             response_data = self._make_request(query, limit)
             tracks = self._parse_tracks(response_data)
             
-            logger.info(f"Generated {len(tracks)} general recommendations")
+            logger.info(f"Generated {len(tracks)} general recommendations (language: {language or 'default'})")
             return tracks
             
         except Exception as e:

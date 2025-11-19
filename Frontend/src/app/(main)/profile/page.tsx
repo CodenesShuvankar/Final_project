@@ -92,7 +92,7 @@ export default function ProfilePage() {
       const authService = AuthService.getInstance();
       const session = await authService.getSession();
       
-      console.log('🔍 Loading mood history...');
+      console.log('🔍 Loading mood history (last 30 days)...');
       console.log('  - API URL:', apiUrl);
       console.log('  - Has session:', !!session);
       console.log('  - Has token:', !!session?.access_token);
@@ -103,7 +103,8 @@ export default function ProfilePage() {
         return;
       }
       
-      const url = `${apiUrl}/mood-history`;
+      // Request last 30 days of mood history
+      const url = `${apiUrl}/mood-history?days=30&limit=100`;
       console.log('  - Fetching from:', url);
       
       const response = await fetch(url, {
@@ -404,41 +405,197 @@ export default function ProfilePage() {
                     <CardDescription>Breakdown of your detected moods</CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <div className="space-y-3">
-                      {(() => {
-                        const moodCounts: Record<string, number> = {};
-                        moodHistory.forEach((m: any) => {
-                          moodCounts[m.detected_mood] = (moodCounts[m.detected_mood] || 0) + 1;
-                        });
-                        const total = moodHistory.length;
-                        const moodEmojis: Record<string, string> = {
-                          happy: '😊', sad: '😢', angry: '😠', neutral: '😐',
-                          fear: '😨', disgust: '🤢', surprise: '😲', energetic: '⚡', calm: '😌'
-                        };
-                        
-                        return Object.entries(moodCounts)
-                          .sort(([,a], [,b]) => b - a)
-                          .map(([mood, count]) => {
-                            const percentage = Math.round((count / total) * 100);
-                            return (
-                              <div key={mood} className="flex items-center gap-3">
-                                <div className="text-2xl">{moodEmojis[mood.toLowerCase()] || '😊'}</div>
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center justify-between mb-1">
-                                    <p className="font-medium capitalize">{mood}</p>
-                                    <span className="text-sm text-muted-foreground">{count} times ({percentage}%)</span>
+                    <div className="space-y-6">
+                      {/* Mood Distribution Bars */}
+                      <div className="space-y-3">
+                        {(() => {
+                          const moodCounts: Record<string, number> = {};
+                          moodHistory.forEach((m: any) => {
+                            moodCounts[m.detected_mood] = (moodCounts[m.detected_mood] || 0) + 1;
+                          });
+                          const total = moodHistory.length;
+                          const moodEmojis: Record<string, string> = {
+                            happy: '😊', sad: '😢', angry: '😠', neutral: '😐',
+                            fear: '😨', disgust: '🤢', surprise: '😲'
+                          };
+                          
+                          return Object.entries(moodCounts)
+                            .sort(([,a], [,b]) => b - a)
+                            .map(([mood, count]) => {
+                              const percentage = Math.round((count / total) * 100);
+                              return (
+                                <div key={mood} className="flex items-center gap-3">
+                                  <div className="text-2xl">{moodEmojis[mood.toLowerCase()] || '😊'}</div>
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center justify-between mb-1">
+                                      <p className="font-medium capitalize">{mood}</p>
+                                      <span className="text-sm text-muted-foreground">{count} times ({percentage}%)</span>
+                                    </div>
+                                    <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
+                                      <div
+                                        className="h-full bg-gradient-to-r from-primary to-primary/60 rounded-full transition-all"
+                                        style={{ width: `${percentage}%` }}
+                                      />
+                                    </div>
                                   </div>
-                                  <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
-                                    <div
-                                      className="h-full bg-gradient-to-r from-primary to-primary/60 rounded-full transition-all"
-                                      style={{ width: `${percentage}%` }}
+                                </div>
+                              );
+                            });
+                        })()}
+                      </div>
+
+                      {/* Mood Variation Timeline Chart */}
+                      <div className="pt-4 border-t">
+                        <h4 className="text-sm font-semibold mb-3 text-muted-foreground">Mood Variation Over Time</h4>
+                        <div className="relative h-48">
+                          {(() => {
+                            // Define mood intensity levels (vertical position)
+                            // Neutral is baseline (50), good moods above, bad moods below
+                            const moodIntensity: Record<string, number> = {
+                              // Good moods - above neutral
+                              happy: 75,      // Top positive
+                              surprise: 65,   // Upper positive
+                              
+                              // Baseline
+                              neutral: 50,    // Middle - baseline
+                              
+                              // Bad moods - below neutral
+                              disgust: 35,    // Upper negative
+                              fear: 25,       // Mid negative
+                              sad: 15,        // Lower negative
+                              angry: 5        // Bottom - most negative
+                            };
+
+                            // Get last 20 mood entries (most recent first, so reverse for timeline)
+                            const recentMoods = [...moodHistory].slice(0, 20).reverse();
+                            if (recentMoods.length === 0) return null;
+
+                            const points = recentMoods.map((m: any, index: number) => {
+                              const mood = m.detected_mood.toLowerCase();
+                              const x = (index / (recentMoods.length - 1)) * 100;
+                              const y = 100 - (moodIntensity[mood] || 50);
+                              return { x, y, mood, date: m.created_at };
+                            });
+
+                            // Create SVG path
+                            const pathData = points.map((p, i) => 
+                              `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`
+                            ).join(' ');
+
+                            // Create area fill path
+                            const areaPath = `${pathData} L ${points[points.length - 1].x} 100 L 0 100 Z`;
+
+                            const moodColors: Record<string, string> = {
+                              happy: '#22c55e', sad: '#3b82f6', angry: '#ef4444',
+                              neutral: '#94a3b8', fear: '#f59e0b', disgust: '#10b981',
+                              surprise: '#8b5cf6'
+                            };
+
+                            return (
+                              <div className="relative w-full h-full">
+                                {/* Y-axis labels */}
+                                <div className="absolute left-0 top-0 bottom-0 flex flex-col justify-between text-[10px] text-muted-foreground pr-2">
+                                  <span>Intense</span>
+                                  <span>Neutral</span>
+                                  <span>Low</span>
+                                </div>
+
+                                {/* Chart container */}
+                                <div className="absolute left-12 right-0 top-0 bottom-0">
+                                  <svg viewBox="0 0 100 100" className="w-full h-full" preserveAspectRatio="none">
+                                    {/* Grid lines */}
+                                    <line x1="0" y1="10" x2="100" y2="10" stroke="currentColor" strokeWidth="0.2" className="text-muted-foreground/20" />
+                                    <line x1="0" y1="50" x2="100" y2="50" stroke="currentColor" strokeWidth="0.2" className="text-muted-foreground/30" strokeDasharray="2,2" />
+                                    <line x1="0" y1="90" x2="100" y2="90" stroke="currentColor" strokeWidth="0.2" className="text-muted-foreground/20" />
+
+                                    {/* Area fill */}
+                                    <path
+                                      d={areaPath}
+                                      fill="url(#moodGradient)"
+                                      opacity="0.2"
                                     />
+
+                                    {/* Line */}
+                                    <path
+                                      d={pathData}
+                                      fill="none"
+                                      stroke="url(#lineGradient)"
+                                      strokeWidth="0.8"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                    />
+
+                                    {/* Data points */}
+                                    {points.map((p, i) => (
+                                      <g key={i}>
+                                        <circle
+                                          cx={p.x}
+                                          cy={p.y}
+                                          r="1.5"
+                                          fill={moodColors[p.mood] || '#94a3b8'}
+                                          className="hover:r-3 transition-all"
+                                        />
+                                      </g>
+                                    ))}
+
+                                    {/* Gradients */}
+                                    <defs>
+                                      <linearGradient id="moodGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                                        <stop offset="0%" stopColor="#ef4444" stopOpacity="0.3" />
+                                        <stop offset="50%" stopColor="#94a3b8" stopOpacity="0.2" />
+                                        <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.3" />
+                                      </linearGradient>
+                                      <linearGradient id="lineGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                                        <stop offset="0%" stopColor="#8b5cf6" />
+                                        <stop offset="50%" stopColor="#3b82f6" />
+                                        <stop offset="100%" stopColor="#22c55e" />
+                                      </linearGradient>
+                                    </defs>
+                                  </svg>
+
+                                  {/* X-axis labels */}
+                                  <div className="absolute -bottom-5 left-0 right-0 flex justify-between text-[10px] text-muted-foreground">
+                                    <span>Oldest</span>
+                                    <span>Recent</span>
                                   </div>
                                 </div>
                               </div>
                             );
-                          });
-                      })()}
+                          })()}
+                        </div>
+
+                        {/* Legend - Color-coded dots */}
+                        <div className="flex flex-wrap gap-x-4 gap-y-2 justify-center pt-6 mt-2">
+                          <div className="flex items-center gap-1.5">
+                            <div className="w-2 h-2 rounded-full bg-red-500"></div>
+                            <span className="text-xs text-muted-foreground">Angry</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <div className="w-2 h-2 rounded-full bg-amber-500"></div>
+                            <span className="text-xs text-muted-foreground">Fear</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
+                            <span className="text-xs text-muted-foreground">Disgust</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <div className="w-2 h-2 rounded-full bg-slate-400"></div>
+                            <span className="text-xs text-muted-foreground">Neutral</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <div className="w-2 h-2 rounded-full bg-purple-500"></div>
+                            <span className="text-xs text-muted-foreground">Surprise</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                            <span className="text-xs text-muted-foreground">Happy</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+                            <span className="text-xs text-muted-foreground">Sad</span>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </CardContent>
                 </Card>
@@ -448,9 +605,9 @@ export default function ProfilePage() {
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                       <TrendingUp className="h-5 w-5" />
-                      Mood Patterns
+                      Mood & Listening Patterns
                     </CardTitle>
-                    <CardDescription>Your emotional insights & trends</CardDescription>
+                    <CardDescription>How your emotions influence your music choices</CardDescription>
                   </CardHeader>
                   <CardContent>
                     <div className="space-y-6">
@@ -461,25 +618,31 @@ export default function ProfilePage() {
                           <span className="text-lg font-bold">
                             {(() => {
                               const uniqueMoods = new Set(moodHistory.map((m: any) => m.detected_mood.toLowerCase())).size;
-                              const maxVariety = 7;
-                              const varietyScore = Math.round((uniqueMoods / maxVariety) * 100);
+                              const maxVariety = 7; // 7 valid emotions: happy, sad, angry, neutral, fear, disgust, surprise
+                              const varietyScore = Math.min(Math.round((uniqueMoods / maxVariety) * 100), 100);
                               return `${varietyScore}%`;
                             })()}
                           </span>
                         </div>
                         <div className="bg-secondary rounded-full h-2">
                           <div 
-                            className="bg-gradient-to-r from-primary to-primary/60 rounded-full h-2 transition-all" 
+                            className="bg-gradient-to-r from-primary via-cyan-500 to-primary/60 rounded-full h-2 transition-all" 
                             style={{
                               width: `${(() => {
                                 const uniqueMoods = new Set(moodHistory.map((m: any) => m.detected_mood.toLowerCase())).size;
-                                return Math.round((uniqueMoods / 7) * 100);
+                                return Math.min(Math.round((uniqueMoods / 7) * 100), 100);
                               })()}%`
                             }}
                           />
                         </div>
                         <p className="text-xs text-muted-foreground mt-1">
-                          {new Set(moodHistory.map((m: any) => m.detected_mood.toLowerCase())).size} different emotions detected
+                          {(() => {
+                            const uniqueMoods = new Set(moodHistory.map((m: any) => m.detected_mood.toLowerCase())).size;
+                            const maxMoods = 7;
+                            if (uniqueMoods === 0) return 'No mood detections yet';
+                            if (uniqueMoods === maxMoods) return `All ${maxMoods} emotions detected - highly varied!`;
+                            return `${uniqueMoods} of ${maxMoods} different emotions detected`;
+                          })()}
                         </p>
                       </div>
 
@@ -487,28 +650,17 @@ export default function ProfilePage() {
                       <div className="grid grid-cols-3 gap-2">
                         {/* Active Streak */}
                         <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-center">
-                          <p className="text-xs font-semibold text-blue-600 dark:text-blue-400">Active Streak</p>
+                          <p className="text-xs font-semibold text-blue-600 dark:text-blue-400">Active Days</p>
                           <p className="text-2xl font-bold mt-1">
                             {(() => {
-                              const sortedDates = moodHistory
-                                .map((m: any) => new Date(m.created_at).toDateString())
-                                .filter((v, i, a) => a.indexOf(v) === i);
-                              
-                              let currentStreak = 0;
-                              for (let i = 0; i < 30; i++) {
-                                const checkDate = new Date();
-                                checkDate.setDate(checkDate.getDate() - i);
-                                if (sortedDates.includes(checkDate.toDateString())) {
-                                  currentStreak++;
-                                } else if (i === 0) {
-                                  continue;
-                                } else {
-                                  break;
-                                }
-                              }
-                              return currentStreak;
-                            })()} days
+                              if (moodHistory.length === 0) return '0';
+                              const uniqueDates = new Set(
+                                moodHistory.map((m: any) => new Date(m.created_at).toDateString())
+                              );
+                              return uniqueDates.size;
+                            })()}
                           </p>
+                          <p className="text-xs text-muted-foreground mt-1">Last 30 days</p>
                         </div>
 
                         {/* Peak Hour */}
@@ -516,6 +668,7 @@ export default function ProfilePage() {
                           <p className="text-xs font-semibold text-purple-600 dark:text-purple-400">Peak Time</p>
                           <p className="text-2xl font-bold mt-1">
                             {(() => {
+                              if (moodHistory.length === 0) return 'N/A';
                               const hourCounts: Record<number, number> = {};
                               moodHistory.forEach((m: any) => {
                                 const hour = new Date(m.created_at).getHours();
@@ -529,56 +682,170 @@ export default function ProfilePage() {
                               return `${displayHour}${period}`;
                             })()}
                           </p>
+                          <p className="text-xs text-muted-foreground mt-1">Most active</p>
                         </div>
 
-                        {/* Mood Trend */}
+                        {/* Songs per Mood */}
                         <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/20 text-center">
-                          <p className="text-xs font-semibold text-green-600 dark:text-green-400">Recent Trend</p>
+                          <p className="text-xs font-semibold text-green-600 dark:text-green-400">Avg Songs</p>
                           <p className="text-2xl font-bold mt-1">
                             {(() => {
-                              const positiveEmotions = ['happy', 'surprise'];
-                              const recentMoods = moodHistory.slice(0, 5);
-                              const olderMoods = moodHistory.slice(5, 10);
-                              
-                              if (olderMoods.length === 0) return '📊';
-                              
-                              const recentPositive = recentMoods.filter((m: any) => 
-                                positiveEmotions.includes(m.detected_mood.toLowerCase())
-                              ).length / recentMoods.length;
-                              
-                              const olderPositive = olderMoods.filter((m: any) => 
-                                positiveEmotions.includes(m.detected_mood.toLowerCase())
-                              ).length / olderMoods.length;
-                              
-                              if (recentPositive > olderPositive + 0.1) return '📈';
-                              if (recentPositive < olderPositive - 0.1) return '📉';
-                              return '➡️';
+                              if (!stats || stats.total_plays === 0 || moodHistory.length === 0) return '0';
+                              const songsPerMood = Math.round(stats.total_plays / moodHistory.length);
+                              return songsPerMood;
                             })()}
                           </p>
+                          <p className="text-xs text-muted-foreground mt-1">Per mood check</p>
                         </div>
                       </div>
 
-                      {/* Trend Description */}
-                      <div className="text-center text-xs text-muted-foreground">
-                        {(() => {
-                          const positiveEmotions = ['happy', 'surprise'];
-                          const recentMoods = moodHistory.slice(0, 5);
-                          const olderMoods = moodHistory.slice(5, 10);
-                          
-                          if (olderMoods.length === 0) return 'Keep checking your mood to see trends!';
-                          
-                          const recentPositive = recentMoods.filter((m: any) => 
-                            positiveEmotions.includes(m.detected_mood.toLowerCase())
-                          ).length / recentMoods.length;
-                          
-                          const olderPositive = olderMoods.filter((m: any) => 
-                            positiveEmotions.includes(m.detected_mood.toLowerCase())
-                          ).length / olderMoods.length;
-                          
-                          if (recentPositive > olderPositive + 0.1) return 'Your recent moods are more positive than before!';
-                          if (recentPositive < olderPositive - 0.1) return 'Your mood has been less positive lately.';
-                          return 'Your mood has been stable recently.';
-                        })()}
+                      {/* Insights Section */}
+                      <div className="space-y-3">
+                        {/* Mood-Music Correlation */}
+                        <div className="p-4 rounded-lg bg-gradient-to-br from-primary/5 to-primary/10 border border-primary/20">
+                          <div className="flex items-start gap-3">
+                            <div className="text-2xl">🎵</div>
+                            <div className="flex-1">
+                              <p className="text-sm font-semibold mb-1">Music Listening Pattern</p>
+                              <p className="text-xs text-muted-foreground">
+                                {(() => {
+                                  if (!stats || stats.total_plays === 0) {
+                                    return 'Start playing music to see how your mood influences your music choices.';
+                                  }
+                                  
+                                  if (moodHistory.length === 0) {
+                                    return 'Use mood detection to discover how your emotions shape your music preferences!';
+                                  }
+                                  
+                                  // Calculate most common mood
+                                  const moodCounts: Record<string, number> = {};
+                                  moodHistory.forEach((m: any) => {
+                                    moodCounts[m.detected_mood.toLowerCase()] = (moodCounts[m.detected_mood.toLowerCase()] || 0) + 1;
+                                  });
+                                  const topMood = Object.entries(moodCounts).sort(([,a], [,b]) => b - a)[0];
+                                  
+                                  if (!topMood) return 'Keep using mood detection to discover patterns!';
+                                  
+                                  const moodPercentage = Math.round((topMood[1] / moodHistory.length) * 100);
+                                  const avgSongs = Math.round(stats.total_plays / moodHistory.length);
+                                  const uniqueMoods = new Set(moodHistory.map((m: any) => m.detected_mood.toLowerCase())).size;
+                                  
+                                  // Different insights based on mood variety
+                                  if (uniqueMoods === 1) {
+                                    return `You've only detected ${topMood[0]} mood so far. Try checking your mood at different times to discover how your emotions vary and explore diverse music recommendations!`;
+                                  } else if (uniqueMoods <= 3) {
+                                    return `You've experienced ${uniqueMoods} different moods (mostly ${topMood[0]} at ${moodPercentage}%). Try mood detection during different activities to unlock more varied music suggestions!`;
+                                  } else if (moodPercentage > 60) {
+                                    return `You're predominantly ${topMood[0]} (${moodPercentage}% of checks). You listen to ${avgSongs} songs per mood check. The app curates music to match your emotional patterns.`;
+                                  } else {
+                                    return `Great emotional variety! You've experienced ${uniqueMoods} different moods, with ${topMood[0]} being most common (${moodPercentage}%). Average ${avgSongs} songs per mood check.`;
+                                  }
+                                })()}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Mood Trend Insight */}
+                        <div className="p-4 rounded-lg bg-gradient-to-br from-blue-500/5 to-blue-500/10 border border-blue-500/20">
+                          <div className="flex items-start gap-3">
+                            <div className="text-2xl">
+                              {(() => {
+                                const positiveEmotions = ['happy', 'surprise', 'energetic'];
+                                const recentMoods = moodHistory.slice(0, Math.ceil(moodHistory.length / 3));
+                                const olderMoods = moodHistory.slice(Math.ceil(moodHistory.length / 3));
+                                
+                                if (olderMoods.length === 0) return '📊';
+                                
+                                const recentPositive = recentMoods.filter((m: any) => 
+                                  positiveEmotions.includes(m.detected_mood.toLowerCase())
+                                ).length / recentMoods.length;
+                                
+                                const olderPositive = olderMoods.filter((m: any) => 
+                                  positiveEmotions.includes(m.detected_mood.toLowerCase())
+                                ).length / olderMoods.length;
+                                
+                                if (recentPositive > olderPositive + 0.15) return '📈';
+                                if (recentPositive < olderPositive - 0.15) return '📉';
+                                return '➡️';
+                              })()}
+                            </div>
+                            <div className="flex-1">
+                              <p className="text-sm font-semibold mb-1">Emotional Trend</p>
+                              <p className="text-xs text-muted-foreground">
+                                {(() => {
+                                  const positiveEmotions = ['happy', 'surprise'];
+                                  const neutralEmotions = ['neutral'];
+                                  const negativeEmotions = ['sad', 'angry', 'fear', 'disgust'];
+                                  
+                                  if (moodHistory.length === 0) return 'Start using mood detection to track your emotional trends over time.';
+                                  if (moodHistory.length < 3) return 'Check your mood more often to see emotional trends over time.';
+                                  
+                                  const recentMoods = moodHistory.slice(0, Math.ceil(moodHistory.length / 3));
+                                  const olderMoods = moodHistory.slice(Math.ceil(moodHistory.length / 3));
+                                  
+                                  if (olderMoods.length === 0) return 'Keep checking your mood to see how your emotions evolve!';
+                                  
+                                  const recentPositive = recentMoods.filter((m: any) => 
+                                    positiveEmotions.includes(m.detected_mood.toLowerCase())
+                                  ).length / recentMoods.length;
+                                  
+                                  const olderPositive = olderMoods.filter((m: any) => 
+                                    positiveEmotions.includes(m.detected_mood.toLowerCase())
+                                  ).length / olderMoods.length;
+                                  
+                                  const recentPercent = Math.round(recentPositive * 100);
+                                  const change = Math.round((recentPositive - olderPositive) * 100);
+                                  
+                                  // Count recent negative moods
+                                  const recentNegative = recentMoods.filter((m: any) => 
+                                    negativeEmotions.includes(m.detected_mood.toLowerCase())
+                                  ).length / recentMoods.length;
+                                  
+                                  if (recentPositive > olderPositive + 0.15) {
+                                    return `Your mood is trending upward! 📈 Recent positive emotions are ${recentPercent}%, up ${Math.abs(change)}% from earlier. Keep using mood-based music to maintain this positive trend!`;
+                                  }
+                                  if (recentPositive < olderPositive - 0.15) {
+                                    return `You've been experiencing fewer positive moods lately (${recentPercent}%, down ${Math.abs(change)}%). 💡 Recommendation: Try listening to uplifting or energetic music to boost your mood, or explore calming tracks if you're feeling stressed.`;
+                                  }
+                                  if (recentNegative > 0.5) {
+                                    return `You've had more challenging emotions recently (${Math.round(recentNegative * 100)}% negative). Music therapy can help - try mood-matching playlists that gradually shift to more positive tones.`;
+                                  }
+                                  if (recentPercent < 20 && recentPercent > 0) {
+                                    return `Low positive mood detection (${recentPercent}%). Consider: Start with calming music when stressed, then gradually transition to uplifting tracks. Mood-based music can significantly impact emotional well-being.`;
+                                  }
+                                  return `Your emotional state has been relatively stable with ${recentPercent}% positive moods recently. The app adapts to your emotional patterns for optimal music recommendations.`;
+                                })()}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Personalized Recommendation */}
+                        {stats && stats.top_artists.length > 0 && (
+                          <div className="p-4 rounded-lg bg-gradient-to-br from-purple-500/5 to-purple-500/10 border border-purple-500/20">
+                            <div className="flex items-start gap-3">
+                              <div className="text-2xl">🎤</div>
+                              <div className="flex-1">
+                                <p className="text-sm font-semibold mb-1">Top Artist Connection</p>
+                                <p className="text-xs text-muted-foreground">
+                                  {(() => {
+                                    const topArtist = stats.top_artists[0];
+                                    const moodCounts: Record<string, number> = {};
+                                    moodHistory.forEach((m: any) => {
+                                      moodCounts[m.detected_mood.toLowerCase()] = (moodCounts[m.detected_mood.toLowerCase()] || 0) + 1;
+                                    });
+                                    const topMood = Object.entries(moodCounts).sort(([,a], [,b]) => b - a)[0];
+                                    
+                                    if (!topMood) return `You've listened to ${topArtist.name} ${topArtist.plays} times this month.`;
+                                    
+                                    return `Your favorite artist ${topArtist.name} (${topArtist.plays} plays) pairs well with your most common ${topMood[0]} mood. The app learns from these patterns to suggest similar artists.`;
+                                  })()}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </CardContent>
@@ -610,9 +877,7 @@ export default function ProfilePage() {
                             neutral: ['Lo-Fi', 'Jazz', 'Ambient'],
                             fear: ['Classical', 'Ambient', 'Indie'],
                             disgust: ['Rock', 'Alternative', 'Punk'],
-                            surprise: ['Electronic', 'Dance', 'Pop'],
-                            energetic: ['Electronic', 'Hip Hop', 'Dance'],
-                            calm: ['Jazz', 'Classical', 'Lo-Fi']
+                            surprise: ['Electronic', 'Dance', 'Pop']
                           };
 
                           const genreColors: Record<string, string> = {

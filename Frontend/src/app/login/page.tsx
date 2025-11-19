@@ -23,20 +23,30 @@ export default function LoginPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    console.log('🔵 Login form submitted');
     setLoading(true);
     setError('');
 
     try {
+      console.log('🔵 Attempting login with email:', email);
       const authService = AuthService.getInstance();
       const result = await authService.login({ email, password });
       
+      console.log('🔵 Login result:', result);
+      
       if (result.success) {
-        router.push('/profile');
+        console.log('✅ Login successful, redirecting to main page');
+        // Small delay to ensure session is set
+        await new Promise(resolve => setTimeout(resolve, 500));
+        // Redirect to main page after successful login
+        window.location.href = '/';
       } else {
+        console.error('❌ Login failed:', result.error);
         setError(result.error || 'Login failed');
       }
-    } catch (err) {
-      setError('An unexpected error occurred');
+    } catch (err: any) {
+      console.error('❌ Login error:', err);
+      setError(err.message || 'An unexpected error occurred');
     } finally {
       setLoading(false);
     }

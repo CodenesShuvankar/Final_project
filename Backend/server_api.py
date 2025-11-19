@@ -125,11 +125,19 @@ async def detect_facial_expression(image_file: UploadFile = File(...)):
 # =============================================
 @app.get("/mood-history")
 async def get_mood_history(
-    limit: int = 20,
+    limit: int = 100,
+    days: int = 30,
     authorization: str = Header(None)
 ):
-    """Get user's mood detection history"""
+    """
+    Get user's mood detection history
+    
+    Args:
+        limit: Maximum number of records to return
+        days: Number of days to look back (default: 30)
+    """
     from middleware.supabase_auth import verify_supabase_token
+    from datetime import datetime, timedelta
     
     # Verify authentication
     user_id = None
@@ -143,9 +151,21 @@ async def get_mood_history(
         raise HTTPException(status_code=401, detail="Unauthorized")
     
     try:
-        # Fetch mood history from database
+        # Calculate date range
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days)
+        
+        logger.info(f"📅 Fetching mood history for user {user_id[:8]}... from {start_date.date()} to {end_date.date()}")
+        
+        # Fetch mood history from database within date range
         mood_history = await db.moodanalysis.find_many(
-            where={"user_id": user_id},
+            where={
+                "user_id": user_id,
+                "created_at": {
+                    "gte": start_date,
+                    "lte": end_date
+                }
+            },
             order={"created_at": "desc"},
             take=limit
         )
@@ -265,17 +285,22 @@ async def analyze_voice(
 #===============================================
 
 @app.get("/recommendations")
-async def get_recommendations(limit: int = 20):
+async def get_recommendations(limit: int = 20, language: str = None):
     """
     Get general music recommendations for home page
     No mood required - returns popular/trending tracks
+    
+    Args:
+        limit: Number of recommendations
+        language: Optional language preference (e.g., 'Bengali', 'Hindi', 'English')
     """
     try:
-        recommendations = spotify_service.get_general_recommendations(limit)
+        recommendations = spotify_service.get_general_recommendations(limit, language)
         return {
             "success": True,
             "count": len(recommendations),
-            "recommendations": recommendations
+            "recommendations": recommendations,
+            "language": language
         }
     except Exception as e:
         logger.error(f"Recommendations error: {str(e)}")
@@ -287,7 +312,7 @@ async def get_mood_recommendations(mood: str, limit: int = 20, language: str = N
     """
     Get music recommendations based on detected mood/emotion with optional language preference
     
-    Supported moods: happy, sad, angry, neutral, fear, disgust, surprise, calm, excited
+    Supported moods: happy, sad, angry, neutral, fear, disgust, surprise
     
     Example: /recommendations/mood/happy?limit=20&language=Hindi
     """

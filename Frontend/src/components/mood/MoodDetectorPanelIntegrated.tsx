@@ -14,7 +14,7 @@ import { SpotifyTrack } from '@/lib/services/spotify';
 import { cn } from '@/lib/utils';
 
 interface MoodDetectorPanelProps {
-  onMoodDetected?: (mood: string, analysis?: MultimodalAnalysis) => void;
+  onMoodDetected?: (mood: string, analysis?: MultimodalAnalysis, recommendations?: any[]) => void;
   className?: string;
   autoDetect?: boolean; // For homepage auto-detection
 }
@@ -413,9 +413,11 @@ export function MoodDetectorPanel({ onMoodDetected, className, autoDetect = fals
 
       if (result.success && result.analysis) {
         setAnalysis(result.analysis);
-        setRecommendations(result.recommendations || []);
-        onMoodDetected?.(result.analysis.merged_emotion, result.analysis);
+        const recs = result.recommendations || [];
+        setRecommendations(recs);
+        onMoodDetected?.(result.analysis.merged_emotion, result.analysis, recs);
         console.log('✅ Analysis complete:', result.analysis.summary);
+        console.log('🎵 Recommendations:', recs.length, 'tracks');
       } else {
         throw new Error(result.error || 'Analysis failed');
       }

@@ -12,7 +12,7 @@ export interface MoodDetection {
 const MOOD_STORAGE_KEY = "detected_mood"
 const MOOD_HISTORY_KEY = "detected_mood_history"
 
-const availableMoods = ["happy", "sad", "energetic", "calm", "focus", "romantic", "chill"]
+const availableMoods = ["happy", "sad", "angry", "neutral", "fear", "surprise", "disgust"]
 
 const randomFrom = <T,>(items: T[]): T => items[Math.floor(Math.random() * items.length)]
 
