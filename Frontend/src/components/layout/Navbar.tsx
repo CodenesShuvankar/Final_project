@@ -7,8 +7,6 @@ import {
   Search, 
   HelpCircle, 
   User,
-  ChevronLeft,
-  ChevronRight,
   LogIn
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -103,59 +101,37 @@ export function Navbar({ className }: NavbarProps) {
 
   return (
     <header className={cn(
-      "sticky top-0 z-50 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b lg:ml-64",
+      "sticky top-0 z-50 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 border-b",
       className
     )}>
-      <div className="flex items-center justify-between px-4 py-3">
-        {/* Left section - Navigation and title */}
-        <div className="flex items-center space-x-4">
-          {/* Back/Forward buttons */}
-          <div className="hidden lg:flex items-center space-x-2">
-            <Button 
-              variant="ghost" 
-              size="icon" 
-              className="h-8 w-8 rounded-full bg-muted"
-              disabled
-            >
-              <ChevronLeft className="h-4 w-4" />
-              <span className="sr-only">Go back</span>
-            </Button>
-            <Button 
-              variant="ghost" 
-              size="icon" 
-              className="h-8 w-8 rounded-full bg-muted"
-              disabled
-            >
-              <ChevronRight className="h-4 w-4" />
-              <span className="sr-only">Go forward</span>
-            </Button>
-          </div>
-
-          {/* Search always visible */}
-          <div className="flex-1 max-w-md">
-            <form onSubmit={handleSearch}>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  placeholder="Search songs, artists, or moods..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10 bg-muted border-0 focus-visible:ring-1"
-                />
-              </div>
-            </form>
-          </div>
+      <div className="flex items-center justify-between py-3 px-4">
+        {/* Left spacer */}
+        <div className="flex-1"></div>
+        
+        {/* Center - Search */}
+        <div className="flex-1 max-w-2xl mx-auto">
+          <form onSubmit={handleSearch}>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="Search songs, artists, or moods..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-10 bg-muted border-0 focus-visible:ring-1 w-full"
+              />
+            </div>
+          </form>
         </div>
 
         {/* Right section - Theme toggle and user menu */}
-        <div className="flex items-center space-x-2">
+        <div className="flex items-center gap-2 flex-1 justify-end">
           <ThemeToggle />
           
           {/* Help menu */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="focus-ring">
-                <HelpCircle className="h-4 w-4" />
+              <Button variant="ghost" size="icon">
+                <HelpCircle className="h-5 w-5" />
                 <span className="sr-only">Help menu</span>
               </Button>
             </DropdownMenuTrigger>
@@ -178,8 +154,8 @@ export function Navbar({ className }: NavbarProps) {
           {isAuthenticated ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="focus-ring">
-                  <User className="h-4 w-4" />
+                <Button variant="ghost" size="icon">
+                  <User className="h-5 w-5" />
                   <span className="sr-only">User menu</span>
                 </Button>
               </DropdownMenuTrigger>

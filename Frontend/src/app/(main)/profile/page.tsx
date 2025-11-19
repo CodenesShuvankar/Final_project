@@ -3,7 +3,8 @@
 import * as React from 'react';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { User, Calendar, Music, LogOut, Plus, Trash2, History, TrendingUp, BarChart3 } from 'lucide-react';
+import Link from 'next/link';
+import { User, Calendar, Music, LogOut, Plus, Trash2, History, TrendingUp, BarChart3, Loader2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -30,6 +31,7 @@ export default function ProfilePage() {
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [newPlaylistDescription, setNewPlaylistDescription] = useState('');
   const [creating, setCreating] = useState(false);
+  const [debugInfo, setDebugInfo] = useState<string>('');
 
   useEffect(() => {
     loadUserData();
@@ -45,18 +47,34 @@ export default function ProfilePage() {
         return;
       }
 
+      console.log('👤 Current user:', userProfile.id, userProfile.email);
       setUser(userProfile);
+      setDebugInfo(prev => prev + `\n✓ User: ${userProfile.email} (${userProfile.id.substring(0, 8)}...)`);
       
       // Load playlists
       const userPlaylists = await PlaylistService.getUserPlaylists();
       setPlaylists(userPlaylists);
+      setDebugInfo(prev => prev + `\n✓ Playlists loaded: ${userPlaylists.length}`);
 
       // Load listening history
-      const { history: listeningHistory } = await HistoryService.getHistory(20);
+      const { history: listeningHistory, total } = await HistoryService.getHistory(20);
+      console.log('📜 Loaded listening history:', listeningHistory.length, 'entries');
+      console.log('  First entry:', listeningHistory[0]);
       setHistory(listeningHistory);
+      setDebugInfo(prev => prev + `\n✓ History loaded: ${listeningHistory.length}/${total} entries`);
 
       // Load statistics
       const listeningStats = await HistoryService.getStats(30);
+      console.log('📊 Loaded stats:', listeningStats);
+      if (listeningStats) {
+        console.log('  - Total plays:', listeningStats.total_plays);
+        console.log('  - Unique songs:', listeningStats.unique_songs);
+        console.log('  - Top artists:', listeningStats.top_artists.length);
+        console.log('  - Mood distribution:', Object.keys(listeningStats.mood_distribution).length, 'moods');
+        setDebugInfo(prev => prev + `\n✓ Stats: ${listeningStats.total_plays} plays, ${listeningStats.unique_songs} songs, ${listeningStats.unique_artists} artists`);
+      } else {
+        setDebugInfo(prev => prev + `\n✗ Stats: null/empty response`);
+      }
       setStats(listeningStats);
       
       // Load mood history
@@ -74,23 +92,55 @@ export default function ProfilePage() {
       const authService = AuthService.getInstance();
       const session = await authService.getSession();
       
-      if (!session?.access_token) return;
+      console.log('🔍 Loading mood history...');
+      console.log('  - API URL:', apiUrl);
+      console.log('  - Has session:', !!session);
+      console.log('  - Has token:', !!session?.access_token);
       
-      const response = await fetch(`${apiUrl}/mood-history?limit=20`, {
+      if (!session?.access_token) {
+        console.log('❌ No access token, skipping mood history');
+        setDebugInfo(prev => prev + '\n✗ Mood history: No access token');
+        return;
+      }
+      
+      const url = `${apiUrl}/mood-history`;
+      console.log('  - Fetching from:', url);
+      
+      const response = await fetch(url, {
         headers: {
           'Authorization': `Bearer ${session.access_token}`
         }
       });
       
+      console.log('  - Response status:', response.status);
+      console.log('  - Response OK:', response.ok);
+      
       if (response.ok) {
         const data = await response.json();
+        console.log('  - Response data:', data);
+        console.log('  - Success:', data.success);
+        console.log('  - History count:', data.count);
+        console.log('  - History length:', data.history?.length);
+        
         if (data.success) {
           setMoodHistory(data.history);
           console.log('✅ Loaded mood history:', data.history.length, 'entries');
+          setDebugInfo(prev => prev + `\n✓ Mood history: ${data.history.length} detections`);
+          if (data.history.length > 0) {
+            console.log('  - First mood:', data.history[0]);
+          }
+        } else {
+          console.log('❌ Success=false:', data.error);
+          setDebugInfo(prev => prev + `\n✗ Mood history error: ${data.error}`);
         }
+      } else {
+        const errorText = await response.text();
+        console.log('❌ Response not OK:', errorText);
+        setDebugInfo(prev => prev + `\n✗ Mood history HTTP ${response.status}`);
       }
     } catch (error) {
       console.error('Failed to load mood history:', error);
+      setDebugInfo(prev => prev + `\n✗ Mood history exception: ${error}`);
     }
   };
 
@@ -206,21 +256,648 @@ export default function ProfilePage() {
       </div>
 
       {/* Tabs for different sections */}
-      <Tabs defaultValue="playlists" className="space-y-6">
+      <Tabs defaultValue="dashboard" className="space-y-6">
         <TabsList>
+          <TabsTrigger value="dashboard">
+            <BarChart3 className="h-4 w-4 mr-2" />
+            Dashboard
+          </TabsTrigger>
+          <TabsTrigger value="history">
+            <History className="h-4 w-4 mr-2" />
+            History
+          </TabsTrigger>
           <TabsTrigger value="playlists">
             <Music className="h-4 w-4 mr-2" />
             Playlists
           </TabsTrigger>
-          <TabsTrigger value="history">
-            <History className="h-4 w-4 mr-2" />
-            Listening History
-          </TabsTrigger>
-          <TabsTrigger value="stats">
-            <BarChart3 className="h-4 w-4 mr-2" />
-            Analytics
-          </TabsTrigger>
         </TabsList>
+
+        {/* Dashboard Tab - Analytics Overview */}
+        <TabsContent value="dashboard">
+          <div className="space-y-6">
+            {/* Mood Analytics Stats Cards */}
+            {moodHistory.length > 0 && (
+              <div className="grid gap-4 md:grid-cols-4">
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-medium text-muted-foreground">Total Songs</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-3xl font-bold">{stats?.total_plays || 0}</div>
+                    <p className="text-xs text-muted-foreground mt-1">Songs played</p>
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-medium text-muted-foreground">Mood Checks</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-3xl font-bold">{moodHistory.length}</div>
+                    <p className="text-xs text-muted-foreground mt-1">Times analyzed</p>
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-medium text-muted-foreground">Primary Mood</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold capitalize flex items-center gap-2">
+                      {(() => {
+                        const moodCounts: Record<string, number> = {};
+                        moodHistory.forEach((m: any) => {
+                          moodCounts[m.detected_mood] = (moodCounts[m.detected_mood] || 0) + 1;
+                        });
+                        const topMood = Object.entries(moodCounts).sort(([,a], [,b]) => b - a)[0];
+                        const moodEmojis: Record<string, string> = {
+                          happy: '😊', sad: '😢', angry: '😠', neutral: '😐',
+                          fear: '😨', disgust: '🤢', surprise: '😲'
+                        };
+                        return topMood ? <>{moodEmojis[topMood[0].toLowerCase()] || '😊'} {topMood[0]}</> : 'N/A';
+                      })()}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">Most frequent</p>
+                  </CardContent>
+                </Card>
+                
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm font-medium text-muted-foreground">Recent Mood</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold capitalize flex items-center gap-2">
+                      {(() => {
+                        const latest = moodHistory[0];
+                        const moodEmojis: Record<string, string> = {
+                          happy: '😊', sad: '😢', angry: '😠', neutral: '😐',
+                          fear: '😨', disgust: '🤢', surprise: '😲'
+                        };
+                        return latest ? <>{moodEmojis[latest.detected_mood.toLowerCase()] || '😊'} {latest.detected_mood}</> : 'N/A';
+                      })()}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {moodHistory[0] ? new Date(moodHistory[0].created_at).toLocaleDateString() : 'Never'}
+                    </p>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+
+            {/* No data state */}
+            {moodHistory.length === 0 && (!stats || stats.total_plays === 0) && (
+              <Card className="border-dashed border-2 border-primary/50 bg-primary/5">
+                <CardContent className="pt-6">
+                  <div className="text-center space-y-4">
+                    <div className="text-6xl">📊🎵😊</div>
+                    <div>
+                      <h3 className="font-semibold text-xl mb-2">Welcome to Your Dashboard!</h3>
+                      <p className="text-sm text-muted-foreground mb-4">
+                        Start building your personalized music analytics:
+                      </p>
+                      <div className="text-left max-w-md mx-auto space-y-3 text-sm text-muted-foreground">
+                        <div className="flex items-start gap-3 p-3 rounded-lg bg-background">
+                          <span className="text-2xl">🎭</span>
+                          <div>
+                            <p className="font-semibold text-foreground">Detect Your Mood</p>
+                            <p>Use voice or camera to analyze your current emotion</p>
+                          </div>
+                        </div>
+                        <div className="flex items-start gap-3 p-3 rounded-lg bg-background">
+                          <span className="text-2xl">🎵</span>
+                          <div>
+                            <p className="font-semibold text-foreground">Play Songs</p>
+                            <p>Browse and play music - it's automatically tracked</p>
+                          </div>
+                        </div>
+                        <div className="flex items-start gap-3 p-3 rounded-lg bg-background">
+                          <span className="text-2xl">📈</span>
+                          <div>
+                            <p className="font-semibold text-foreground">See Your Patterns</p>
+                            <p>Watch your emotional and listening trends emerge</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex gap-3 justify-center pt-4">
+                      <Button asChild variant="default" size="lg">
+                        <Link href="/mood">🎭 Detect Mood</Link>
+                      </Button>
+                      <Button asChild variant="outline" size="lg">
+                        <Link href="/suggest">🎵 Get Songs</Link>
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Mood Distribution Chart */}
+            {moodHistory.length > 0 && (
+              <div className="grid gap-6 md:grid-cols-2">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <BarChart3 className="h-5 w-5" />
+                      Emotion Distribution
+                    </CardTitle>
+                    <CardDescription>Breakdown of your detected moods</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-3">
+                      {(() => {
+                        const moodCounts: Record<string, number> = {};
+                        moodHistory.forEach((m: any) => {
+                          moodCounts[m.detected_mood] = (moodCounts[m.detected_mood] || 0) + 1;
+                        });
+                        const total = moodHistory.length;
+                        const moodEmojis: Record<string, string> = {
+                          happy: '😊', sad: '😢', angry: '😠', neutral: '😐',
+                          fear: '😨', disgust: '🤢', surprise: '😲', energetic: '⚡', calm: '😌'
+                        };
+                        
+                        return Object.entries(moodCounts)
+                          .sort(([,a], [,b]) => b - a)
+                          .map(([mood, count]) => {
+                            const percentage = Math.round((count / total) * 100);
+                            return (
+                              <div key={mood} className="flex items-center gap-3">
+                                <div className="text-2xl">{moodEmojis[mood.toLowerCase()] || '😊'}</div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center justify-between mb-1">
+                                    <p className="font-medium capitalize">{mood}</p>
+                                    <span className="text-sm text-muted-foreground">{count} times ({percentage}%)</span>
+                                  </div>
+                                  <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
+                                    <div
+                                      className="h-full bg-gradient-to-r from-primary to-primary/60 rounded-full transition-all"
+                                      style={{ width: `${percentage}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          });
+                      })()}
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Mood Patterns Analysis */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <TrendingUp className="h-5 w-5" />
+                      Mood Patterns
+                    </CardTitle>
+                    <CardDescription>Your emotional insights & trends</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-6">
+                      {/* Emotional Variety */}
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-sm font-medium">Emotional Variety</span>
+                          <span className="text-lg font-bold">
+                            {(() => {
+                              const uniqueMoods = new Set(moodHistory.map((m: any) => m.detected_mood.toLowerCase())).size;
+                              const maxVariety = 7;
+                              const varietyScore = Math.round((uniqueMoods / maxVariety) * 100);
+                              return `${varietyScore}%`;
+                            })()}
+                          </span>
+                        </div>
+                        <div className="bg-secondary rounded-full h-2">
+                          <div 
+                            className="bg-gradient-to-r from-primary to-primary/60 rounded-full h-2 transition-all" 
+                            style={{
+                              width: `${(() => {
+                                const uniqueMoods = new Set(moodHistory.map((m: any) => m.detected_mood.toLowerCase())).size;
+                                return Math.round((uniqueMoods / 7) * 100);
+                              })()}%`
+                            }}
+                          />
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {new Set(moodHistory.map((m: any) => m.detected_mood.toLowerCase())).size} different emotions detected
+                        </p>
+                      </div>
+
+                      {/* Grid of insights */}
+                      <div className="grid grid-cols-3 gap-2">
+                        {/* Active Streak */}
+                        <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-center">
+                          <p className="text-xs font-semibold text-blue-600 dark:text-blue-400">Active Streak</p>
+                          <p className="text-2xl font-bold mt-1">
+                            {(() => {
+                              const sortedDates = moodHistory
+                                .map((m: any) => new Date(m.created_at).toDateString())
+                                .filter((v, i, a) => a.indexOf(v) === i);
+                              
+                              let currentStreak = 0;
+                              for (let i = 0; i < 30; i++) {
+                                const checkDate = new Date();
+                                checkDate.setDate(checkDate.getDate() - i);
+                                if (sortedDates.includes(checkDate.toDateString())) {
+                                  currentStreak++;
+                                } else if (i === 0) {
+                                  continue;
+                                } else {
+                                  break;
+                                }
+                              }
+                              return currentStreak;
+                            })()} days
+                          </p>
+                        </div>
+
+                        {/* Peak Hour */}
+                        <div className="p-3 rounded-lg bg-purple-500/10 border border-purple-500/20 text-center">
+                          <p className="text-xs font-semibold text-purple-600 dark:text-purple-400">Peak Time</p>
+                          <p className="text-2xl font-bold mt-1">
+                            {(() => {
+                              const hourCounts: Record<number, number> = {};
+                              moodHistory.forEach((m: any) => {
+                                const hour = new Date(m.created_at).getHours();
+                                hourCounts[hour] = (hourCounts[hour] || 0) + 1;
+                              });
+                              const peakHour = Object.entries(hourCounts).sort(([,a], [,b]) => b - a)[0];
+                              if (!peakHour) return 'N/A';
+                              const hour = parseInt(peakHour[0]);
+                              const period = hour >= 12 ? 'PM' : 'AM';
+                              const displayHour = hour % 12 || 12;
+                              return `${displayHour}${period}`;
+                            })()}
+                          </p>
+                        </div>
+
+                        {/* Mood Trend */}
+                        <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/20 text-center">
+                          <p className="text-xs font-semibold text-green-600 dark:text-green-400">Recent Trend</p>
+                          <p className="text-2xl font-bold mt-1">
+                            {(() => {
+                              const positiveEmotions = ['happy', 'surprise'];
+                              const recentMoods = moodHistory.slice(0, 5);
+                              const olderMoods = moodHistory.slice(5, 10);
+                              
+                              if (olderMoods.length === 0) return '📊';
+                              
+                              const recentPositive = recentMoods.filter((m: any) => 
+                                positiveEmotions.includes(m.detected_mood.toLowerCase())
+                              ).length / recentMoods.length;
+                              
+                              const olderPositive = olderMoods.filter((m: any) => 
+                                positiveEmotions.includes(m.detected_mood.toLowerCase())
+                              ).length / olderMoods.length;
+                              
+                              if (recentPositive > olderPositive + 0.1) return '📈';
+                              if (recentPositive < olderPositive - 0.1) return '📉';
+                              return '➡️';
+                            })()}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Trend Description */}
+                      <div className="text-center text-xs text-muted-foreground">
+                        {(() => {
+                          const positiveEmotions = ['happy', 'surprise'];
+                          const recentMoods = moodHistory.slice(0, 5);
+                          const olderMoods = moodHistory.slice(5, 10);
+                          
+                          if (olderMoods.length === 0) return 'Keep checking your mood to see trends!';
+                          
+                          const recentPositive = recentMoods.filter((m: any) => 
+                            positiveEmotions.includes(m.detected_mood.toLowerCase())
+                          ).length / recentMoods.length;
+                          
+                          const olderPositive = olderMoods.filter((m: any) => 
+                            positiveEmotions.includes(m.detected_mood.toLowerCase())
+                          ).length / olderMoods.length;
+                          
+                          if (recentPositive > olderPositive + 0.1) return 'Your recent moods are more positive than before!';
+                          if (recentPositive < olderPositive - 0.1) return 'Your mood has been less positive lately.';
+                          return 'Your mood has been stable recently.';
+                        })()}
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+
+            {/* Top Genres & Top Artists - side by side */}
+            {(moodHistory.length > 0 || (stats && stats.top_artists.length > 0)) && (
+              <div className="grid gap-4 md:grid-cols-2">
+                {/* Top Genres */}
+                {moodHistory.length > 0 && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <Music className="h-5 w-5" />
+                        Top Genres
+                      </CardTitle>
+                      <CardDescription>Your favorite music genres</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-3">
+                        {(() => {
+                          // Map moods to likely genre preferences
+                          const moodToGenres: Record<string, string[]> = {
+                            happy: ['Pop', 'Dance', 'Electronic'],
+                            sad: ['Indie', 'R&B', 'Classical'],
+                            angry: ['Rock', 'Hip Hop', 'Metal'],
+                            neutral: ['Lo-Fi', 'Jazz', 'Ambient'],
+                            fear: ['Classical', 'Ambient', 'Indie'],
+                            disgust: ['Rock', 'Alternative', 'Punk'],
+                            surprise: ['Electronic', 'Dance', 'Pop'],
+                            energetic: ['Electronic', 'Hip Hop', 'Dance'],
+                            calm: ['Jazz', 'Classical', 'Lo-Fi']
+                          };
+
+                          const genreColors: Record<string, string> = {
+                            'Pop': 'bg-pink-500',
+                            'Rock': 'bg-blue-500',
+                            'Hip Hop': 'bg-green-500',
+                            'Electronic': 'bg-orange-500',
+                            'Jazz': 'bg-purple-500',
+                            'Classical': 'bg-gray-500',
+                            'Indie': 'bg-rose-500',
+                            'R&B': 'bg-indigo-500',
+                            'Country': 'bg-emerald-500',
+                            'Lo-Fi': 'bg-amber-500',
+                            'Dance': 'bg-cyan-500',
+                            'Metal': 'bg-red-500',
+                            'Ambient': 'bg-teal-500',
+                            'Alternative': 'bg-violet-500',
+                            'Punk': 'bg-red-600'
+                          };
+
+                          // Calculate genre scores based on mood frequency
+                          const genreScores: Record<string, number> = {};
+                          
+                          moodHistory.forEach((m: any) => {
+                            const mood = m.detected_mood.toLowerCase();
+                            const genres = moodToGenres[mood] || ['Pop', 'Rock', 'Jazz'];
+                            
+                            genres.forEach((genre, index) => {
+                              // First genre gets more weight
+                              const weight = 1 / (index + 1);
+                              genreScores[genre] = (genreScores[genre] || 0) + weight;
+                            });
+                          });
+
+                          // Get top 5 genres
+                          const topGenres = Object.entries(genreScores)
+                            .sort(([,a], [,b]) => b - a)
+                            .slice(0, 5);
+
+                          const maxScore = topGenres[0]?.[1] || 1;
+
+                          return topGenres.length > 0 ? topGenres.map(([genre, score], index) => {
+                            const percentage = Math.round((score / maxScore) * 100);
+                            const displayPercentage = Math.round((score / moodHistory.length) * 100);
+                            
+                            return (
+                              <div key={genre} className="flex items-center gap-3">
+                                <div className={`flex-shrink-0 w-12 h-12 rounded-lg ${genreColors[genre] || 'bg-primary'} flex items-center justify-center text-white font-bold text-xs shadow-md`}>
+                                  {genre.slice(0, 3).toUpperCase()}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center justify-between mb-1">
+                                    <p className="font-medium">{genre}</p>
+                                    <span className="text-sm text-muted-foreground">{displayPercentage}%</span>
+                                  </div>
+                                  <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
+                                    <div
+                                      className={`h-full ${genreColors[genre] || 'bg-primary'} rounded-full transition-all`}
+                                      style={{ width: `${percentage}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          }) : (
+                            <p className="text-sm text-muted-foreground text-center py-4">
+                              No genre data available yet. Keep using mood detection!
+                            </p>
+                          );
+                        })()}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Top Artists */}
+                {stats && stats.top_artists.length > 0 && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <Music className="h-5 w-5" />
+                        Top Artists
+                      </CardTitle>
+                      <CardDescription>Your most played artists (last 30 days)</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-3">
+                        {stats.top_artists.slice(0, 5).map((artist, index) => {
+                          // Split artist names if multiple (e.g., "Artist1, Artist2, Artist3")
+                          const artistNames = artist.name.split(',').map((a: string) => a.trim());
+                          const displayName = artistNames.length > 2 
+                            ? `${artistNames[0]}, ${artistNames[1]} +${artistNames.length - 2} more`
+                            : artist.name;
+                          
+                          // Artist initials for square badge
+                          const initials = artist.name.split(' ').map(word => word[0]).join('').toUpperCase().slice(0, 2);
+                          
+                          // Generate color based on artist name
+                          const colors = ['bg-pink-500', 'bg-blue-500', 'bg-green-500', 'bg-orange-500', 'bg-purple-500', 
+                                         'bg-indigo-500', 'bg-rose-500', 'bg-cyan-500', 'bg-amber-500', 'bg-teal-500'];
+                          const colorIndex = artist.name.charCodeAt(0) % colors.length;
+                          
+                          return (
+                            <div key={artist.name} className="flex items-center gap-3">
+                              <div className={`flex-shrink-0 w-12 h-12 rounded-lg ${colors[colorIndex]} flex items-center justify-center text-white font-bold text-xs shadow-md`}>
+                                {initials}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center justify-between mb-1">
+                                  <p className="font-medium truncate" title={artist.name}>
+                                    {displayName}
+                                  </p>
+                                  <span className="text-sm text-muted-foreground">{artist.plays} plays</span>
+                                </div>
+                                <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
+                                  <div
+                                    className={`h-full ${colors[colorIndex]} rounded-full transition-all`}
+                                    style={{
+                                      width: `${(artist.plays / (stats.top_artists[0]?.plays || 1)) * 100}%`,
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+            )}
+          </div>
+        </TabsContent>
+
+        {/* History Tab - Combined Listening + Mood History */}
+        <TabsContent value="history">
+          <div className="space-y-6">
+            {/* Listening History Section */}
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <Music className="h-5 w-5" />
+                      Listening History
+                    </CardTitle>
+                    <CardDescription>Songs you've recently played</CardDescription>
+                  </div>
+                  {history.length > 0 && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={async () => {
+                        if (confirm('Clear all listening history?')) {
+                          const success = await HistoryService.clearHistory();
+                          if (success) {
+                            setHistory([]);
+                            setStats(null);
+                          }
+                        }
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4 mr-2" />
+                      Clear
+                    </Button>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent>
+                {history.length === 0 ? (
+                  <div className="text-center py-12">
+                    <Music className="h-12 w-12 mx-auto text-muted-foreground opacity-50" />
+                    <p className="mt-4 text-muted-foreground">No songs played yet</p>
+                    <p className="text-sm text-muted-foreground">Start playing music to see your history</p>
+                    <Button asChild variant="outline" size="sm" className="mt-4">
+                      <Link href="/search">Browse Music</Link>
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {history.slice(0, 10).map((entry) => (
+                      <div
+                        key={entry.id}
+                        className="flex items-center gap-4 p-3 rounded-lg hover:bg-accent/50 transition-colors"
+                      >
+                        {entry.image_url && (
+                          <img
+                            src={entry.image_url}
+                            alt={entry.song_name}
+                            className="w-12 h-12 rounded object-cover"
+                          />
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium truncate">{entry.song_name}</p>
+                          <p className="text-sm text-muted-foreground truncate">{entry.artist_name}</p>
+                          <div className="flex items-center gap-2 mt-1 flex-wrap">
+                            <span className="text-xs text-muted-foreground">
+                              {new Date(entry.played_at).toLocaleString()}
+                            </span>
+                            {entry.mood_detected && (
+                              <Badge variant="secondary" className="text-xs">
+                                {getMoodEmoji(entry.mood_detected)} {entry.mood_detected}
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    {history.length > 10 && (
+                      <p className="text-xs text-center text-muted-foreground pt-2">
+                        Showing 10 of {history.length} songs
+                      </p>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Mood Detection History Section */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <BarChart3 className="h-5 w-5" />
+                  Mood Detection History
+                </CardTitle>
+                <CardDescription>Your recent emotion analyses</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {moodHistory.length === 0 ? (
+                  <div className="text-center py-12">
+                    <div className="text-5xl mb-4">😊😢😠😐</div>
+                    <p className="mt-4 text-muted-foreground">No mood detections yet</p>
+                    <p className="text-sm text-muted-foreground">Visit the Mood page to analyze your emotions</p>
+                    <Button asChild variant="outline" size="sm" className="mt-4">
+                      <Link href="/mood">Detect Mood</Link>
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {moodHistory.slice(0, 15).map((mood: any) => {
+                      const confidencePercent = Math.round(mood.confidence * 100);
+                      const moodEmojis: Record<string, string> = {
+                        happy: '😊', sad: '😢', angry: '😠', neutral: '😐',
+                        fear: '😨', disgust: '🤢', surprise: '😲', energetic: '⚡', calm: '😌'
+                      };
+                      const moodEmoji = moodEmojis[mood.detected_mood.toLowerCase()] || '😊';
+                      
+                      return (
+                        <div key={mood.id} className="flex items-center gap-3 p-3 rounded-lg bg-muted/50 hover:bg-muted/70 transition-colors">
+                          <div className="text-3xl">{moodEmoji}</div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="font-medium capitalize">{mood.detected_mood}</p>
+                              <Badge variant="outline" className="text-xs">
+                                {confidencePercent}%
+                              </Badge>
+                              <Badge variant="secondary" className="text-xs">
+                                {mood.analysis_type}
+                              </Badge>
+                            </div>
+                            {mood.voice_emotion && mood.face_emotion && (
+                              <p className="text-xs text-muted-foreground mt-1">
+                                🎤 {mood.voice_emotion} ({Math.round(mood.voice_confidence * 100)}%) • 
+                                📷 {mood.face_emotion} ({Math.round(mood.face_confidence * 100)}%)
+                              </p>
+                            )}
+                            <p className="text-xs text-muted-foreground mt-1">
+                              {new Date(mood.created_at).toLocaleString()}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {moodHistory.length > 15 && (
+                      <p className="text-xs text-center text-muted-foreground pt-2">
+                        Showing 15 of {moodHistory.length} detections
+                      </p>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
 
         {/* Playlists Tab */}
         <TabsContent value="playlists">
@@ -319,7 +996,7 @@ export default function ProfilePage() {
                       <CardContent>
                         <div className="flex items-center gap-2 text-sm text-muted-foreground">
                           <Music className="h-4 w-4" />
-                          <span>{playlist.song_count || 0} songs</span>
+                          <span>Playlist</span>
                           <span>•</span>
                           <span>{new Date(playlist.created_at).toLocaleDateString()}</span>
                         </div>
@@ -330,262 +1007,6 @@ export default function ProfilePage() {
               )}
             </CardContent>
           </Card>
-        </TabsContent>
-
-        {/* History Tab */}
-        <TabsContent value="history">
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle>Listening History</CardTitle>
-                  <CardDescription>Songs you&apos;ve recently played</CardDescription>
-                </div>
-                {history.length > 0 && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={async () => {
-                      if (confirm('Clear all listening history?')) {
-                        const success = await HistoryService.clearHistory();
-                        if (success) {
-                          setHistory([]);
-                          setStats(null);
-                        }
-                      }
-                    }}
-                  >
-                    <Trash2 className="h-4 w-4 mr-2" />
-                    Clear History
-                  </Button>
-                )}
-              </div>
-            </CardHeader>
-            <CardContent>
-              {history.length === 0 ? (
-                <div className="text-center py-12">
-                  <History className="h-12 w-12 mx-auto text-muted-foreground opacity-50" />
-                  <p className="mt-4 text-muted-foreground">No listening history yet</p>
-                  <p className="text-sm text-muted-foreground">Start playing songs to see them here</p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {history.map((entry) => (
-                    <div
-                      key={entry.id}
-                      className="flex items-center gap-4 p-3 rounded-lg hover:bg-accent/50 transition-colors"
-                    >
-                      {entry.image_url && (
-                        <img
-                          src={entry.image_url}
-                          alt={entry.song_name}
-                          className="w-12 h-12 rounded object-cover"
-                        />
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium truncate">{entry.song_name}</p>
-                        <p className="text-sm text-muted-foreground truncate">{entry.artist_name}</p>
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="text-xs text-muted-foreground">
-                            {new Date(entry.played_at).toLocaleString()}
-                          </span>
-                          {entry.mood_detected && (
-                            <Badge variant="secondary" className="text-xs">
-                              {getMoodEmoji(entry.mood_detected)} {entry.mood_detected}
-                            </Badge>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Stats Tab */}
-        <TabsContent value="stats">
-          <div className="space-y-6">
-            {/* Overall Stats */}
-            <div className="grid gap-4 md:grid-cols-3">
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Total Plays</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold">{stats?.total_plays || 0}</div>
-                  <p className="text-xs text-muted-foreground mt-1">Last 30 days</p>
-                </CardContent>
-              </Card>
-              
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Unique Songs</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold">{stats?.unique_songs || 0}</div>
-                  <p className="text-xs text-muted-foreground mt-1">Different tracks</p>
-                </CardContent>
-              </Card>
-              
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Artists</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold">{stats?.unique_artists || 0}</div>
-                  <p className="text-xs text-muted-foreground mt-1">Different artists</p>
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* Top Artists */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <TrendingUp className="h-5 w-5" />
-                  Top Artists
-                </CardTitle>
-                <CardDescription>Your most played artists in the last 30 days</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {!stats || stats.top_artists.length === 0 ? (
-                  <p className="text-sm text-muted-foreground text-center py-8">No data yet</p>
-                ) : (
-                  <div className="space-y-3">
-                    {stats.top_artists.map((artist, index) => (
-                      <div key={artist.name} className="flex items-center gap-3">
-                        <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center font-bold text-sm">
-                          {index + 1}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium truncate">{artist.name}</p>
-                          <p className="text-sm text-muted-foreground">{artist.plays} plays</p>
-                        </div>
-                        <div className="w-24 h-2 bg-muted rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-primary rounded-full"
-                            style={{
-                              width: `${(artist.plays / (stats.top_artists[0]?.plays || 1)) * 100}%`,
-                            }}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Mood Distribution */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <BarChart3 className="h-5 w-5" />
-                  Mood Detection History
-                </CardTitle>
-                <CardDescription>Your recent mood detections</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {moodHistory.length === 0 ? (
-                  <p className="text-sm text-muted-foreground text-center py-8">
-                    No mood detections yet. Visit the Mood page to detect your current mood!
-                  </p>
-                ) : (
-                  <div className="space-y-3">
-                    {moodHistory.slice(0, 10).map((mood: any) => {
-                      const confidencePercent = Math.round(mood.confidence * 100);
-                      const moodEmoji = {
-                        happy: '😊',
-                        sad: '😢',
-                        angry: '😠',
-                        neutral: '😐',
-                        fear: '😨',
-                        disgust: '🤢',
-                        surprise: '😲',
-                        energetic: '⚡',
-                        calm: '😌'
-                      }[mood.detected_mood.toLowerCase()] || '😊';
-                      
-                      return (
-                        <div key={mood.id} className="flex items-center gap-3 p-3 rounded-lg bg-muted/50">
-                          <div className="text-3xl">{moodEmoji}</div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <p className="font-medium capitalize">{mood.detected_mood}</p>
-                              <Badge variant="outline" className="text-xs">
-                                {confidencePercent}% confidence
-                              </Badge>
-                              <Badge variant="secondary" className="text-xs">
-                                {mood.analysis_type}
-                              </Badge>
-                            </div>
-                            {mood.voice_emotion && mood.face_emotion && (
-                              <p className="text-xs text-muted-foreground mt-1">
-                                Voice: {mood.voice_emotion} ({Math.round(mood.voice_confidence * 100)}%) • 
-                                Face: {mood.face_emotion} ({Math.round(mood.face_confidence * 100)}%)
-                              </p>
-                            )}
-                            <p className="text-xs text-muted-foreground mt-1">
-                              {new Date(mood.created_at).toLocaleString()}
-                            </p>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-            
-            {/* Old Mood Distribution from listening stats */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <BarChart3 className="h-5 w-5" />
-                  Mood Distribution
-                </CardTitle>
-                <CardDescription>What moods you listen to music in</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {!stats || Object.keys(stats.mood_distribution).length === 0 ? (
-                  <p className="text-sm text-muted-foreground text-center py-8">
-                    Enable mood detection to see your mood patterns
-                  </p>
-                ) : (
-                  <div className="space-y-3">
-                    {Object.entries(stats.mood_distribution)
-                      .sort(([, a], [, b]) => b - a)
-                      .map(([mood, count]) => {
-                        const total = Object.values(stats.mood_distribution).reduce((a, b) => a + b, 0);
-                        const percentage = Math.round((count / total) * 100);
-                        
-                        return (
-                          <div key={mood} className="space-y-2">
-                            <div className="flex items-center justify-between text-sm">
-                              <span className="flex items-center gap-2">
-                                <span className="text-lg">{getMoodEmoji(mood)}</span>
-                                <span className="font-medium capitalize">{mood}</span>
-                              </span>
-                              <span className="text-muted-foreground">
-                                {count} plays ({percentage}%)
-                              </span>
-                            </div>
-                            <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
-                              <div
-                                className="h-full bg-gradient-to-r from-primary to-primary/60 rounded-full transition-all"
-                                style={{ width: `${percentage}%` }}
-                              />
-                            </div>
-                          </div>
-                        );
-                      })}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
         </TabsContent>
       </Tabs>
     </div>
