@@ -147,6 +147,9 @@ python -m venv venv
 # Install the required dependencies
 pip install -r requirements.txt
 
+#for prisma generation
+prisma generate
+
 # Create the environment file from the example
 # In PowerShell:
 copy .env.example .env
