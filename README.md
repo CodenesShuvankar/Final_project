@@ -138,11 +138,14 @@ cd VibeTune
 # Navigate to the Backend directory
 cd Backend
 
-#paste this to Backend/
+#download the model from this link and paste this to Backend/voice_model/final_voice_model folder
 -link - https://drive.google.com/drive/folders/1qDL5Arjf2JCxPJ6_73uU_5rOBU9QSzZP?usp=sharing
-# Create and activate a Python virtual environment
+
+# Create enviroment in python
 python -m venv venv
-.\venv\Scripts\Activate.ps1
+
+#activate a Python virtual environment
+venv\Scripts\Activate.ps1
 
 # Install the required dependencies
 pip install -r requirements.txt
@@ -151,11 +154,9 @@ pip install -r requirements.txt
 prisma generate
 
 # Create the environment file from the example
-# In PowerShell:
-copy .env.example .env
+paste the .env file to Backend/
 
-# In Git Bash or other terminals:
-# cp .env.example .env
+
 
 # Edit the .env file with your credentials from Supabase and RapidAPI
 # SUPABASE_URL=https://your-project-id.supabase.co
@@ -173,18 +174,17 @@ The backend will be running at `http://localhost:8000`. You can access the API d
 ### 3. Frontend Setup
 
 ```powershell
+#open another powershell or terminal in vs code
+
 # Navigate to the Frontend directory from the root
 cd Frontend
 
 # Install the required dependencies
 npm install
 
-# Create the local environment file from the example
-# In PowerShell:
-copy .env.example .env.local
+#paste the .env.local file to the Frontend/
+.env.local
 
-# In Git Bash or other terminals:
-# cp .env.example .env.local
 
 # Edit the .env.local file with your Supabase credentials
 # NEXT_PUBLIC_SUPABASE_URL=https://your-project-id.supabase.co
