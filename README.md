@@ -215,7 +215,7 @@ VibeTune/
 ├── Backend/                          # FastAPI Backend
 │   ├── server_api.py                # Main application entry point & routes
 │   ├── requirements.txt             # Python dependencies
-│   ├── .env.example                 # Environment variable template
+│   ├── .env                 # Environment variable template
 │   │
 │   ├── middleware/
 │   │   └── supabase_auth.py         # JWT verification middleware
@@ -263,7 +263,8 @@ VibeTune/
 │   │       └── utils.ts             # Utility functions
 │   │
 │   ├── package.json                 # Node dependencies
-│   └── ...
+│   └── .env.local                    #Ebv file place 
+|   | ...
 │
 ├── Docs/                             # Detailed documentation files
 ├── README.md                         # This file
