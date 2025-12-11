@@ -21,7 +21,7 @@ interface SidebarProps {
 }
 
 const navigation = [
-  { name: 'Home', href: '/', icon: Home, public: true },
+  { name: 'Home', href: '/home', icon: Home, public: true },
   { name: 'Search', href: '/search', icon: Search, public: true },
   { name: 'Your Library', href: '/library', icon: Library, public: false },
 ];
@@ -50,7 +50,7 @@ export function Sidebar({ className, isAuthenticated }: SidebarProps) {
     )}>
       {/* Logo */}
       <div className="flex items-center h-16 px-6 border-b">
-        <Link href="/" className="flex items-center space-x-2">
+        <Link href="/home" className="flex items-center space-x-2">
           <div className="w-8 h-8 bg-primary rounded-full flex items-center justify-center">
             <span className="text-white font-bold text-sm">V</span>
           </div>

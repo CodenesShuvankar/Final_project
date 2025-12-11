@@ -29,71 +29,99 @@ This diagram shows the end-to-end flow, from user interaction on the frontend to
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ FRONTEND (Next.js - Port 3000)                                  │
-│ components/mood/MoodDetectorPanelIntegrated.tsx                 │
-│ ┌─────────────┐   ┌──────────────┐   ┌─────────────────────┐    │
-│ │ User clicks │ → │ Record audio │ → │ Capture image       │    │
-│ │ "Detect"    │   │ (7s, 16kHz WAV)│ │ from <video> stream │    │
-│ └─────────────┘   └──────────────┘   └─────────────────────┘    │
+│ FRONTEND (Next.js 14 - Port 3000)                               │
+│ ┌─────────────────────────────────────────────────────────────┐ │
+│ │ TWO DETECTION MODES                                         │ │
+│ └─────────────────────────────────────────────────────────────┘ │
+│                                                                 │
+│ MODE 1: Manual Detection (MoodDetectorPanelMediaPipe.tsx)      │
+│ ┌─────────────┐   ┌──────────────┐   ┌─────────────────────┐  │
+│ │ User clicks │ → │ MediaPipe    │ → │ Record 5s video     │  │
+│ │ "Start"     │   │ Face Tracking│   │ (WebM, audio+video) │  │
+│ └─────────────┘   └──────────────┘   └─────────────────────┘  │
 │                                                 ↓               │
-│                                   ┌─────────────────────────┐   │
-│                                   │ lib/services/voiceEmotion.ts│
-│                                   │ FormData with:          │   │
-│                                   │ - audio_file (Blob)     │   │
-│                                   │ - image_file (Blob)     │   │
-│                                   └─────────────────────────┘   │
-└────────────────────────────────────────┬────────────────────────┘
-                                         │ HTTP POST to http://localhost:8000/analyze-voice-and-face
-                                         ↓
+│                          lib/services/voiceEmotion.ts           │
+│                          POST /analyze-video                    │
+│                                                                 │
+│ MODE 2: Auto Detection (AutoMoodDetector.tsx)                  │
+│ ┌─────────────┐   ┌──────────────┐   ┌─────────────────────┐  │
+│ │ Timer: 3s   │ → │ Capture photo│ → │ Generate silent     │  │
+│ │ + 30min loop│   │ from camera  │   │ video (5s, no audio)│  │
+│ └─────────────┘   └──────────────┘   └─────────────────────┘  │
+│                                                 ↓               │
+│                  lib/services/autoMoodDetection.ts              │
+│                  POST /analyze-video (face-only)                │
+└────────────────────────────────┬────────────────────────────────┘
+                                 │ HTTP POST
+                                 ↓
 ┌─────────────────────────────────────────────────────────────────┐
 │ BACKEND (FastAPI - Port 8000)                                   │
 │ ┌────────────────────────────────────────────────────────────┐  │
-│ │ server_api.py: @app.post("/analyze-voice-and-face")        │  │
-│ │ 1. Middleware: middleware/supabase_auth.py (Verify JWT)    │  │
-│ │ 2. Save temp files (audio.wav, image.jpg)                  │  │
+│ │ server_api.py: @app.post("/analyze-video")                 │  │
+│ │ 1. Middleware: supabase_auth.py (Optional JWT)             │  │
+│ │ 2. Save video to temp file                                 │  │
+│ │ 3. Check audio stream (ffprobe)                            │  │
 │ └────────────┬────────────────────────┬──────────────────────┘  │
-│              ↓ (Parallel Execution)   ↓                         │
+│              ↓ (Conditional)          ↓                         │
 │    ┌──────────────────┐     ┌──────────────────┐                │
 │    │ VOICE ANALYSIS   │     │ FACE ANALYSIS    │                │
+│    │ (if audio exists)│     │ (always)         │                │
+│    │                  │     │                  │                │
 │    │ voice_model/     │     │ video_model/     │                │
 │    │ voice_api.py     │     │ face_expression.py                │
 │    │                  │     │                  │                │
-│    │ 1. Load audio    │     │ 1. Load image    │                │
-│    │ 2. Resample 16kHz│     │ 2. Detect face   │                │
-│    │ 3. Tokenize      │     │ 3. DeepFace      │                │
-│    │ 4. Wav2Vec2      │     │ 4. Normalize     │                │
-│    │ 5. Softmax       │     │                  │                │
+│    │ 1. Extract audio │     │ 1. Sample frames │                │
+│    │    (FFmpeg)      │     │    (every 10th)  │                │
+│    │ 2. Load/resample │     │ 2. Crop faces    │                │
+│    │ 3. Wav2Vec2      │     │ 3. DeepFace      │                │
+│    │ 4. Softmax       │     │ 4. Avg emotions  │                │
 │    │                  │     │                  │                │
 │    │ Result: happy    │     │ Result: happy    │                │
-│    │ (Confidence 0.87)│     │ (Confidence 0.78)│                │
+│    │ (0.87) or None   │     │ (0.78)           │                │
 │    └──────────┬───────┘     └────────┬─────────┘                │
 │               └──────────┬───────────┘                          │
 │                          ↓                                      │
 │              ┌──────────────────────┐                           │
 │              │ EMOTION FUSION       │                           │
-│              │ services/emotion_fusion.py                       │
+│              │ (Priority: NeuroSyncFusion → Rule-based)         │
 │              │                      │                           │
-│              │ 1. Get agreement     │ → "Strong"                │
-│              │ 2. Calc weights      │ → (0.55, 0.45)            │
-│              │ 3. Choose emotion    │ → "happy"                 │
-│              │ 4. Combine scores    │ → Weighted Avg: 0.829     │
+│              │ NeuroSyncFusion (if both exist):                 │
+│              │ 1. Load fusion model │ → PyTorch model           │
+│              │ 2. Process 16 frames │ → LSTM features           │
+│              │ 3. Combine modalities│ → Joint prediction        │
+│              │                      │                           │
+│              │ emotion_fusion.py (fallback):                    │
+│              │ 1. Calc agreement    │ → "Strong"/"Partial"      │
+│              │ 2. Weight emotions   │ → (0.55, 0.45)            │
+│              │ 3. Merge predictions │ → Weighted avg            │
 │              └──────────┬───────────┘                           │
 │                         ↓                                       │
 │              ┌──────────────────────┐                           │
 │              │ SPOTIFY SERVICE      │                           │
 │              │ services/spotify_service.py                      │
 │              │                      │                           │
-│              │ 1. Get lang priority │ → routes/user_preferences.py │
-│              │ 2. Map mood→params   │ → valence, energy, etc.   │
+│              │ 1. Map mood→params   │ → valence, energy, tempo  │
+│              │ 2. Get user prefs    │ → routes/user_preferences │
 │              │ 3. API request       │ → RapidAPI (Spotify)      │
-│              │ 4. Parse tracks      │ → 20 tracks               │
+│              │ 4. Filter language   │ → Bengali/Hindi priority  │
 │              └──────────┬───────────┘                           │
 │                         ↓                                       │
 │              ┌──────────────────────┐                           │
-│              │ BUILD & SEND RESPONSE│                           │
+│              │ DATABASE (Prisma)    │                           │
+│              │ routes/mood_analysis.py                          │
+│              │                      │                           │
+│              │ 1. Store analysis    │ → mood_analysis table     │
+│              │ 2. Link user         │ → user_id (if auth)       │
+│              │ 3. Save timestamp    │ → for analytics           │
+│              └──────────┬───────────┘                           │
+│                         ↓                                       │
+│              ┌──────────────────────┐                           │
+│              │ RESPONSE             │                           │
 │              │ {                    │                           │
 │              │   "success": true,   │                           │
-│              │   "combined_emotion": "happy", ...               │
+│              │   "final_emotion": "happy",                      │
+│              │   "confidence": 0.829,                           │
+│              │   "recommendations": [...]                       │
 │              │ }                    │                           │
 │              └──────────────────────┘                           │
 └────────────────────────┬────────────────────────────────────────┘
@@ -102,11 +130,11 @@ This diagram shows the end-to-end flow, from user interaction on the frontend to
 ┌─────────────────────────────────────────────────────────────────┐
 │ FRONTEND (React/Next.js)                                        │
 │ ┌──────────────────────────────────────────────────────────┐    │
-│ │ Display Results in components/mood/MoodDetectorPanel...  │    │
-│ │ - Emotion: HAPPY                                         │    │
-│ │ - Confidence: 82.9%                                      │    │
-│ │ - Agreement: Strong                                      │    │
-│ │ - Music: Grid of 20 songs (components/music/SongCard.tsx)│    │
+│ │ Display Results                                          │    │
+│ │ - MoodBadge: HAPPY                                       │    │
+│ │ - MoodConfidence: 82.9%                                  │    │
+│ │ - Music Grid: 20 songs (components/music/SongCard.tsx)   │    │
+│ │ - Toast: "Auto-detected: Happy" (AutoMoodDetector)       │    │
 │ └──────────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -120,7 +148,7 @@ Follow these steps to set up and run the project locally.
 ### Prerequisites
 
 - **Node.js**: v18.0 or higher
-- **Python**: v3.12.9 
+- **Python**: v3.9 or higher
 - **Git**: For cloning the repository
 - **Supabase Account**: For database and authentication (free tier is sufficient)
 - **RapidAPI Account**: With a subscription to the Spotify API
@@ -138,8 +166,6 @@ cd VibeTune
 # Navigate to the Backend directory
 cd Backend
 
-#paste this to Backend/
--link - https://drive.google.com/drive/folders/1qDL5Arjf2JCxPJ6_73uU_5rOBU9QSzZP?usp=sharing
 # Create and activate a Python virtual environment
 python -m venv venv
 .\venv\Scripts\Activate.ps1
@@ -210,61 +236,120 @@ The frontend will be running at `http://localhost:3000`.
 ```
 VibeTune/
 ├── Backend/                          # FastAPI Backend
-│   ├── server_api.py                # Main application entry point & routes
+│   ├── server_api.py                # Main API: /analyze-video, /recommendations
 │   ├── requirements.txt             # Python dependencies
 │   ├── .env.example                 # Environment variable template
+│   ├── database.py                  # Prisma client initialization
+│   ├── INSTALL_FFMPEG.md            # FFmpeg setup guide for Windows
 │   │
 │   ├── middleware/
 │   │   └── supabase_auth.py         # JWT verification middleware
 │   │
-│   ├── routes/                      # API route modules for DB operations
-│   │   ├── playlists.py             # Playlist CRUD
-│   │   └── ...
+│   ├── routes/                      # Prisma-based database operations
+│   │   ├── playlists_prisma.py      # Playlist CRUD with Prisma
+│   │   ├── user_preferences.py      # User settings & language prefs
+│   │   ├── mood_analysis.py         # Store mood detection history
+│   │   ├── history.py               # Listening history tracking
+│   │   └── liked_songs.py           # User's liked songs
 │   │
 │   ├── services/                    # Business logic
-│   │   ├── emotion_fusion.py        # Emotion merging algorithm
-│   │   └── spotify_service.py       # Spotify API wrapper
+│   │   ├── emotion_fusion.py        # Rule-based emotion merging (fallback)
+│   │   └── spotify_service.py       # Spotify API wrapper (RapidAPI)
 │   │
 │   ├── video_model/                 # Facial emotion detection
-│   │   └── face_expression.py       # DeepFace integration
+│   │   └── face_expression.py       # DeepFace + face cropping
 │   │
-│   └── voice_model/                 # Voice emotion detection
-│       ├── voice_api.py             # Wav2Vec2 integration
-│       └── final_voice_model/       # Pre-trained model files
+│   ├── voice_model/                 # Voice emotion detection
+│   │   ├── voice_api.py             # Wav2Vec2 model integration
+│   │   ├── last_checkpoint.pth      # NeuroSyncFusion checkpoint
+│   │   └── final_voice_model/       # Wav2Vec2 pre-trained model
+│   │       ├── config.json
+│   │       ├── model.safetensors
+│   │       └── preprocessor_config.json
+│   │
+│   └── prisma/
+│       └── schema.prisma            # Prisma database schema
 │
-├── Frontend/                         # Next.js Frontend
+├── Frontend/                         # Next.js 14 Frontend
 │   ├── src/
-│   │   ├── app/                     # Next.js 14 App Router
-│   │   │   ├── (main)/              # Authenticated routes
-│   │   │   │   ├── page.tsx         # Home page
-│   │   │   │   └── mood/page.tsx    # Mood detection page
+│   │   ├── app/                     # App Router (Next.js 14)
+│   │   │   ├── page.tsx             # Landing page
 │   │   │   ├── login/page.tsx       # Login page
-│   │   │   └── layout.tsx           # Root layout
+│   │   │   ├── signup/page.tsx      # Signup page
+│   │   │   ├── callback/page.tsx    # OAuth callback
+│   │   │   │
+│   │   │   └── (main)/              # Protected routes (authenticated)
+│   │   │       ├── layout.tsx       # Layout with Sidebar + BottomNav
+│   │   │       ├── page.tsx         # Home/Dashboard
+│   │   │       ├── mood/page.tsx    # Mood detection page
+│   │   │       ├── search/page.tsx  # Search music
+│   │   │       ├── library/page.tsx # User's library
+│   │   │       ├── playlist/        # Playlist management
+│   │   │       ├── suggest/page.tsx # Mood-based suggestions
+│   │   │       ├── account/page.tsx # Account settings
+│   │   │       ├── profile/page.tsx # User profile
+│   │   │       └── feature-requests/ # Feature request system
 │   │   │
 │   │   ├── components/
 │   │   │   ├── mood/
-│   │   │   │ └── MoodDetectorPanelIntegrated.tsx # Main detector UI
+│   │   │   │   ├── MoodDetectorPanelMediaPipe.tsx  # Manual detection
+│   │   │   │   ├── AutoMoodDetector.tsx            # Auto-detection
+│   │   │   │   ├── MoodBadge.tsx                   # Emotion display
+│   │   │   │   ├── MoodConfidence.tsx              # Confidence bar
+│   │   │   │   └── CameraPreview.tsx               # Camera preview
+│   │   │   │
 │   │   │   ├── music/
-│   │   │   │   ├── MusicRecommendations.tsx    # Displays song grid
-│   │   │   │   └── SongCard.tsx                # Individual song card
+│   │   │   │   ├── MusicRecommendations.tsx        # Song grid
+│   │   │   │   └── SongCard.tsx                    # Individual song
+│   │   │   │
+│   │   │   ├── player/                # Audio player components
+│   │   │   ├── suggest/               # Suggestion components
+│   │   │   ├── feedback/              # Feature request components
+│   │   │   ├── ui/                    # Reusable UI components
 │   │   │   └── layout/
-│   │   │       ├── Navbar.tsx
-│   │   │       └── Sidebar.tsx
+│   │   │       ├── Navbar.tsx         # Top navigation
+│   │   │       ├── Sidebar.tsx        # Desktop sidebar
+│   │   │       ├── BottomNav.tsx      # Mobile bottom nav
+│   │   │       └── ThemeToggle.tsx    # Dark/light mode
 │   │   │
 │   │   └── lib/
-│   │       ├── services/            # Frontend API service layer
-│   │       │   ├── auth.ts          # Supabase auth functions
-│   │       │   ├── spotify.ts       # Calls to backend for music
-│   │       │   └── voiceEmotion.ts  # Calls to backend for mood analysis
-│   │       ├── supabaseClient.ts    # Supabase client configuration
-│   │       └── utils.ts             # Utility functions
+│   │       ├── services/              # Frontend API layer
+│   │       │   ├── voiceEmotion.ts    # Video/multimodal analysis
+│   │       │   ├── autoMoodDetection.ts # Auto-detection service
+│   │       │   ├── mood.ts            # Mood recommendations
+│   │       │   ├── spotify.ts         # Spotify integration
+│   │       │   ├── auth.ts            # Supabase auth
+│   │       │   ├── playlistService.ts # Playlist operations
+│   │       │   ├── moodAnalysisService.ts # Mood history
+│   │       │   ├── historyService.ts  # Listening history
+│   │       │   ├── likedSongs.ts      # Liked songs
+│   │       │   └── library.ts         # Library management
+│   │       │
+│   │       ├── store/                 # Zustand state management
+│   │       ├── supabaseClient.ts      # Supabase client config
+│   │       ├── mockData.ts            # Mock data for development
+│   │       └── utils.ts               # Utility functions
 │   │
-│   ├── package.json                 # Node dependencies
-│   └── ...
+│   ├── package.json                   # Node dependencies
+│   ├── next.config.js                 # Next.js configuration
+│   ├── tailwind.config.ts             # Tailwind CSS config
+│   └── .env.example                   # Frontend env template
 │
-├── Docs/                             # Detailed documentation files
-├── README.md                         # This file
-└── supabase_schema.sql              # Database schema for Supabase
+├── Docs/                              # Detailed documentation
+│   ├── Backend/
+│   │   ├── 01_Overview.md
+│   │   ├── 02_API_Endpoints.md
+│   │   ├── 03_Voice_Model.md
+│   │   ├── 04_Face_Model.md
+│   │   ├── 05_Emotion_Fusion.md
+│   │   ├── 06_Spotify_Integration.md
+│   │   └── ...
+│   └── Frontend/
+│       └── README.md
+│
+├── .gitignore                         # Git ignore rules
+├── README.MD                          # This file
+└── package.json                       # Root package.json (workspace)
 ```
 
 ---
@@ -278,4 +363,9 @@ A comprehensive testing guide with detailed scenarios for every feature can be f
 -   Error recovery and edge case scenarios.
 
 ---
+
+## 🤝 Contributing
+
+Contributions are welcome! Please fork the repository, create a feature branch, and open a pull request.
+
 

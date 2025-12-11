@@ -8,7 +8,8 @@ from pathlib import Path
 import tempfile
 import os
 import logging
-from typing import Tuple, Dict, Union
+import subprocess
+from typing import Tuple, Dict, Union, Optional
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -21,18 +22,77 @@ _model_cache = {}
 # MODEL LOADING
 # ===================================================================
 
-def load_model(model_path_or_repo):
-    """Load the trained 7-class model and processor"""
+def _clean_state_dict_keys(state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    """Remove common wrappers (module./model.) from checkpoint keys."""
+    cleaned = {}
+    for k, v in state_dict.items():
+        if k.startswith("module."):
+            new_key = k[len("module."):]
+        elif k.startswith("model."):
+            new_key = k[len("model."):]
+        else:
+            new_key = k
+        cleaned[new_key] = v
+    return cleaned
+
+
+def load_model(model_path_or_repo: str, checkpoint_path: Optional[str] = None):
+    """
+    Load the trained 7-class model and processor.
+
+    If a Torch checkpoint is provided, try to load it into the base model while
+    keeping the Hugging Face config from ``model_path_or_repo``.
+    """
+    checkpoint_mtime = None
+    checkpoint_path = str(checkpoint_path) if checkpoint_path else None
+    if checkpoint_path and Path(checkpoint_path).exists():
+        checkpoint_mtime = Path(checkpoint_path).stat().st_mtime
+
+    cache_key = (model_path_or_repo, checkpoint_mtime)
+
     # Check cache first
-    if model_path_or_repo in _model_cache:
-        return _model_cache[model_path_or_repo]
+    if cache_key in _model_cache:
+        return _model_cache[cache_key]
     
     try:
         model = Wav2Vec2ForSequenceClassification.from_pretrained(model_path_or_repo)
         processor = Wav2Vec2FeatureExtractor.from_pretrained(model_path_or_repo)
+
+        # Optionally load improved weights from checkpoint
+        if checkpoint_path and Path(checkpoint_path).exists():
+            try:
+                state = torch.load(checkpoint_path, map_location=torch.device("cpu"))
+                if isinstance(state, dict):
+                    if "state_dict" in state:
+                        state = state["state_dict"]
+                    elif "model_state_dict" in state:
+                        state = state["model_state_dict"]
+                if isinstance(state, dict):
+                    state = _clean_state_dict_keys(state)
+
+                    # Only load keys that match the current architecture; skip mismatched checkpoints
+                    model_state = model.state_dict()
+                    matched = {k: v for k, v in state.items() if k in model_state and model_state[k].shape == v.shape}
+
+                    if not matched:
+                        logger.warning(
+                            "Checkpoint at %s is incompatible with this model; skipping load to avoid corrupt weights",
+                            checkpoint_path,
+                        )
+                    else:
+                        missing, unexpected = model.load_state_dict(matched, strict=False)
+                        if missing:
+                            logger.warning(f"Checkpoint missing keys (ignored): {missing}")
+                        if unexpected:
+                            logger.warning(f"Checkpoint had unexpected keys (ignored): {unexpected}")
+                        logger.info(f"Loaded checkpoint weights from {checkpoint_path} with {len(matched)} matching keys")
+                else:
+                    logger.warning(f"Checkpoint at {checkpoint_path} not a state dict; skipping")
+            except Exception as ckpt_error:
+                logger.warning(f"Failed to load checkpoint at {checkpoint_path}: {ckpt_error}")
         
         # Cache the loaded model
-        _model_cache[model_path_or_repo] = (model, processor)
+        _model_cache[cache_key] = (model, processor)
         
         logger.info(f"Model loaded successfully from {model_path_or_repo}")
         return model, processor
@@ -41,36 +101,14 @@ def load_model(model_path_or_repo):
         raise Exception(f"Failed to load model: {e}")
 
 # ===================================================================
-# AUDIO PROCESSING
+# Load Audio and AUDIO PROCESSING
 # ===================================================================
-
-def process_audio(audio_data, sample_rate=16000):
-    """Process audio data for model input"""
-    try:
-        # Convert to mono if stereo
-        if len(audio_data.shape) > 1:
-            audio_data = np.mean(audio_data, axis=1)
-        
-        # Resample if needed
-        if sample_rate != 16000:
-            audio_data = librosa.resample(audio_data, orig_sr=sample_rate, target_sr=16000)
-        
-        # Normalize
-        audio_data = librosa.util.normalize(audio_data)
-        
-        logger.info("Audio processed successfully")
-        return audio_data
-    except Exception as e:
-        logger.error(f"Error processing audio: {e}")
-        raise Exception(f"Failed to process audio: {e}")
-
 def load_audio_file(file_path: str, sr: int = 16000) -> np.ndarray:
     """
-    Load audio file from path and return audio data
-    Frontend sends WAV files directly, so this is straightforward
+    Load audio from file path and return audio data
     
     Args:
-        file_path: Path to audio file
+        file_path: Path to audio file on disk
         sr: Target sample rate (default: 16000)
         
     Returns:
@@ -79,46 +117,18 @@ def load_audio_file(file_path: str, sr: int = 16000) -> np.ndarray:
     try:
         logger.info(f"Loading audio file: {file_path}")
         
-        # Load audio with librosa (supports WAV, MP3, etc.)
+        # Load audio with librosa - already converts to mono and resamples to target sr
         audio_data, sample_rate = librosa.load(file_path, sr=sr, mono=True)
-        audio_data = process_audio(audio_data, sample_rate)
         
-        logger.info(f"Audio file loaded successfully: {file_path}")
+        # Normalize amplitude
+        audio_data = librosa.util.normalize(audio_data)
+        
+        logger.info(f"Audio file loaded successfully: {file_path}, shape: {audio_data.shape}")
         return audio_data
         
     except Exception as e:
         logger.error(f"Error loading audio file: {e}", exc_info=True)
         raise Exception(f"Failed to load audio file: {e}")
-
-def load_audio_from_bytes(audio_bytes: bytes, sr: int = 16000) -> np.ndarray:
-    """
-    Load audio from bytes (e.g., from uploaded file) and return audio data
-    
-    Args:
-        audio_bytes: Audio data as bytes
-        sr: Target sample rate (default: 16000)
-        
-    Returns:
-        Processed audio data as numpy array
-    """
-    try:
-        # Save to temporary file since librosa handles file paths better
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_file:
-            tmp_file.write(audio_bytes)
-            tmp_path = tmp_file.name
-        
-        # Load audio from temporary file
-        audio_data, sample_rate = librosa.load(tmp_path, sr=sr)
-        audio_data = process_audio(audio_data, sample_rate)
-        
-        # Clean up
-        os.unlink(tmp_path)
-        
-        logger.info("Audio loaded from bytes successfully")
-        return audio_data
-    except Exception as e:
-        logger.error(f"Error loading audio from bytes: {e}")
-        raise Exception(f"Failed to load audio from bytes: {e}")
 
 def load_audio_from_upload(upload_file) -> np.ndarray:
     """
@@ -144,30 +154,88 @@ def load_audio_from_upload(upload_file) -> np.ndarray:
             
             if len(content) == 0:
                 raise Exception("Empty audio file received")
+            
+            # Reject suspiciously small files (< 1KB likely corrupted)
+            if len(content) < 1000:
+                logger.warning(f"Suspiciously small audio file: {len(content)} bytes")
+                raise Exception(f"Audio file too small ({len(content)} bytes). Likely corrupted or silent.")
                 
             tmp_file.write(content)
             tmp_path = tmp_file.name
         
         logger.info(f"Saved to temporary file: {tmp_path}")
+
+        # Try loading with librosa first
+        try:
+            audio_data, sample_rate = librosa.load(tmp_path, sr=16000, mono=True)
+        except Exception as librosa_error:
+            logger.warning(f"Librosa failed, trying pydub/FFmpeg: {librosa_error}")
+            # Fallback to pydub which uses FFmpeg
+            try:
+                from pydub import AudioSegment
+                import numpy as np
+                
+                # Load with pydub
+                audio = AudioSegment.from_file(tmp_path)
+                
+                # Convert to mono
+                if audio.channels > 1:
+                    audio = audio.set_channels(1)
+                
+                # Resample to 16kHz
+                audio = audio.set_frame_rate(16000)
+                
+                # Convert to numpy array
+                samples = np.array(audio.get_array_of_samples(), dtype=np.float32)
+                audio_data = samples / (2**15)  # Normalize int16 to float32
+                
+            except ImportError:
+                raise Exception("Failed to load audio. Install FFmpeg: https://ffmpeg.org/download.html")
+            except Exception as pydub_error:
+                raise Exception(f"Audio file appears corrupted or invalid format: {pydub_error}")
         
-        # Load audio from temporary file
-        audio_data = load_audio_file(tmp_path)
+        # Normalize amplitude
+        audio_data = librosa.util.normalize(audio_data)
         
         # Clean up temporary file
         try:
             os.unlink(tmp_path)
         except:
-            pass  # Ignore cleanup errors
+            pass
         
-        logger.info(f"Audio uploaded successfully: {upload_file.filename}, shape: {audio_data.shape}")
+        logger.info(f"Audio loaded: {upload_file.filename}, shape: {audio_data.shape}")
         return audio_data
         
     except Exception as e:
-        logger.error(f"Error loading audio from upload: {e}", exc_info=True)
-        raise Exception(f"Failed to load audio from upload: {e}")
+        logger.error(f"Error loading audio: {e}")
+        raise Exception(f"Failed to load audio: {str(e)}")
 
 
-def predict_emotion(audio_data, model, processor) -> Tuple[str, float, Dict[str, float]]:
+def assess_audio_quality(audio_data: np.ndarray, sr: int = 16000) -> Dict[str, float]:
+    """Lightweight heuristics to flag silence, hum, or low-information audio."""
+    rms = float(np.sqrt(np.mean(audio_data ** 2)))
+    peak = float(np.max(np.abs(audio_data)))
+    zcr = float(librosa.feature.zero_crossing_rate(audio_data, frame_length=1024, hop_length=512)[0].mean())
+    centroid = float(librosa.feature.spectral_centroid(y=audio_data, sr=sr)[0].mean())
+
+    # Energy concentration inside the typical speech band (85-4000 Hz)
+    spectrum = np.abs(np.fft.rfft(audio_data))
+    freqs = np.fft.rfftfreq(len(audio_data), 1.0 / sr)
+    speech_band = (freqs >= 85) & (freqs <= 4000)
+    speech_energy = float(spectrum[speech_band].sum())
+    total_energy = float(spectrum.sum() + 1e-8)
+    speech_ratio = speech_energy / total_energy
+
+    return {
+        "rms": rms,
+        "peak": peak,
+        "zcr": zcr,
+        "centroid": centroid,
+        "speech_ratio": speech_ratio
+    }
+
+
+def predict_emotion(audio_data, model, processor, sr: int = 16000) -> Tuple[str, float, Dict[str, float], Dict[str, float]]:
     """
     Predict emotion from audio
     
@@ -180,25 +248,41 @@ def predict_emotion(audio_data, model, processor) -> Tuple[str, float, Dict[str,
         Tuple of (predicted_emotion, confidence, all_emotions_dict)
     """
     try:
-        # Check if audio has enough energy (not silence)
-        audio_energy = np.sqrt(np.mean(audio_data**2))  # RMS energy
-        audio_max = np.max(np.abs(audio_data))
-        
-        logger.info(f"Audio energy: {audio_energy:.6f}, max amplitude: {audio_max:.6f}")
-        
-        # If audio is too quiet (likely silence or background noise), return neutral with low confidence
-        # Increased thresholds to better detect silence/background noise
-        if audio_energy < 0.15 or audio_max < 0.3:
-            logger.warning(f"Audio too quiet (energy: {audio_energy:.6f}, max: {audio_max:.6f}) - likely silence or background noise, returning neutral")
-            return "neutral", 0.3, {
-                "neutral": 0.3,
+        if len(audio_data) < sr * 0.25:  # shorter than ~250ms
+            logger.warning("Audio clip too short for reliable prediction; returning neutral")
+            return "neutral", 0.2, {
+                "neutral": 0.2,
                 "happy": 0.15,
                 "sad": 0.15,
                 "angry": 0.1,
                 "fear": 0.1,
                 "disgust": 0.1,
                 "surprise": 0.1
-            }
+            }, {"rms": 0.0, "peak": 0.0, "zcr": 0.0, "centroid": 0.0, "speech_ratio": 0.0}
+
+        quality = assess_audio_quality(audio_data, sr=sr)
+        logger.info(
+            "Audio quality → rms=%.4f peak=%.4f zcr=%.3f centroid=%.1fHz speech_ratio=%.2f",
+            quality["rms"], quality["peak"], quality["zcr"], quality["centroid"], quality["speech_ratio"],
+        )
+
+        # Guard rails for silence/low-frequency hum/noise-only input
+        # Relaxed thresholds to allow emotional speech with softer volume
+        too_quiet = quality["rms"] < 0.05 or quality["peak"] < 0.15
+        low_speech_band = quality["speech_ratio"] < 0.05
+        no_variation = quality["zcr"] < 0.01 or quality["centroid"] < 80.0
+
+        if too_quiet or low_speech_band or no_variation:
+            logger.warning("Audio flagged as low-information; returning neutral fallback")
+            return "neutral", 0.25, {
+                "neutral": 0.25,
+                "happy": 0.15,
+                "sad": 0.15,
+                "angry": 0.1,
+                "fear": 0.1,
+                "disgust": 0.1,
+                "surprise": 0.1
+            }, quality
         
         # Prepare inputs
         inputs = processor(
@@ -215,6 +299,12 @@ def predict_emotion(audio_data, model, processor) -> Tuple[str, float, Dict[str,
             outputs = model(**inputs)
             logits = outputs.logits
             probs = torch.nn.functional.softmax(logits, dim=-1)[0]
+            
+            # DEBUG: Log raw logits to see if model is uncertain
+            logits_np = logits[0].cpu().numpy()
+            logits_str = ", ".join(f"{model.config.id2label[i]}={logits_np[i]:.3f}" for i in range(len(logits_np)))
+            logger.info(f"Voice raw logits: {logits_str}")
+            
             probs = probs.cpu().numpy()
         
         # Get predictions
@@ -225,8 +315,12 @@ def predict_emotion(audio_data, model, processor) -> Tuple[str, float, Dict[str,
         # Get all emotion probabilities
         all_emotions = {model.config.id2label[i]: float(probs[i]) for i in range(len(probs))}
         
+        # Log ALL probabilities to diagnose low confidence
+        sorted_emotions = sorted(all_emotions.items(), key=lambda x: x[1], reverse=True)
+        probs_str = ", ".join(f"{emo}={prob:.2%}" for emo, prob in sorted_emotions)
         logger.info(f"Emotion predicted: {predicted_emotion} (confidence: {confidence:.4f})")
-        return predicted_emotion, confidence, all_emotions
+        logger.info(f"All emotion probabilities: {probs_str}")
+        return predicted_emotion, confidence, all_emotions, quality
         
     except Exception as e:
         logger.error(f"Error predicting emotion: {e}")
@@ -279,7 +373,7 @@ def get_emotion_description(emotion: str) -> str:
 # CONVENIENCE FUNCTION FOR END-TO-END PREDICTION
 # ===================================================================
 
-def analyze_audio_file(file_path: str, model_path_or_repo: str) -> Dict:
+def analyze_audio_file(file_path: str, model_path_or_repo: str, checkpoint_path: Optional[str] = None) -> Dict:
     """
     End-to-end audio emotion analysis from file path
     
@@ -292,13 +386,13 @@ def analyze_audio_file(file_path: str, model_path_or_repo: str) -> Dict:
     """
     try:
         # Load model
-        model, processor = load_model(model_path_or_repo)
+        model, processor = load_model(model_path_or_repo, checkpoint_path)
         
-        # Load and process audio
+        # Load and process audio from file path
         audio_data = load_audio_file(file_path)
         
         # Predict emotion
-        emotion, confidence, all_emotions = predict_emotion(audio_data, model, processor)
+        emotion, confidence, all_emotions, quality = predict_emotion(audio_data, model, processor)
         
         return {
             "success": True,
@@ -308,7 +402,8 @@ def analyze_audio_file(file_path: str, model_path_or_repo: str) -> Dict:
                 "all_emotions": all_emotions,
                 "emoji": get_emotion_emoji(emotion),
                 "color": get_emotion_color(emotion),
-                "description": get_emotion_description(emotion)
+                "description": get_emotion_description(emotion),
+                "quality": quality
             }
         }
         
@@ -319,7 +414,7 @@ def analyze_audio_file(file_path: str, model_path_or_repo: str) -> Dict:
             "error": str(e)
         }
 
-def analyze_audio_upload(upload_file, model_path_or_repo: str) -> Dict:
+def analyze_audio_upload(upload_file, model_path_or_repo: str, checkpoint_path: Optional[str] = None) -> Dict:
     """
     End-to-end audio emotion analysis from uploaded file
     
@@ -332,13 +427,13 @@ def analyze_audio_upload(upload_file, model_path_or_repo: str) -> Dict:
     """
     try:
         # Load model
-        model, processor = load_model(model_path_or_repo)
+        model, processor = load_model(model_path_or_repo, checkpoint_path)
         
         # Load and process audio from upload
         audio_data = load_audio_from_upload(upload_file)
         
         # Predict emotion
-        emotion, confidence, all_emotions = predict_emotion(audio_data, model, processor)
+        emotion, confidence, all_emotions, quality = predict_emotion(audio_data, model, processor)
         
         return {
             "success": True,
@@ -348,7 +443,8 @@ def analyze_audio_upload(upload_file, model_path_or_repo: str) -> Dict:
                 "all_emotions": all_emotions,
                 "emoji": get_emotion_emoji(emotion),
                 "color": get_emotion_color(emotion),
-                "description": get_emotion_description(emotion)
+                "description": get_emotion_description(emotion),
+                "quality": quality
             }
         }
         

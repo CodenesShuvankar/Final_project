@@ -18,7 +18,7 @@ interface BottomNavProps {
 }
 
 const navigation = [
-  { name: 'Home', href: '/', icon: Home, public: true },
+  { name: 'Home', href: '/home', icon: Home, public: true },
   { name: 'Search', href: '/search', icon: Search, public: true },
   { name: 'Suggest', href: '/suggest', icon: Lightbulb, public: false },
   { name: 'Library', href: '/library', icon: Library, public: false },

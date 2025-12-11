@@ -15,8 +15,6 @@ import { usePlayerStore } from '@/lib/store/playerStore';
 import { SpotifyTrack, SpotifyMusicService } from '@/lib/services/spotify';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { filterTracksByLanguage } from '@/lib/utils/languageFilter';
-import { supabase } from '@/lib/supabaseClient';
 
 /**
  * Search page with tabs for different content types
@@ -28,33 +26,8 @@ export default function SearchPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [detectedMood, setDetectedMood] = useState<string | null>(null);
-  const [languagePriorities, setLanguagePriorities] = useState<string[]>(['English']);
   const { playerService } = usePlayerStore();
   const spotifyService = SpotifyMusicService.getInstance();
-
-  // Load user language preferences
-  React.useEffect(() => {
-    const loadLanguagePreferences = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session) {
-          const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-          const response = await fetch(`${apiUrl}/api/user-preferences`, {
-            headers: { 'Authorization': `Bearer ${session.access_token}` },
-          });
-          if (response.ok) {
-            const data = await response.json();
-            const languages = data.preferences?.language_priorities || ['English'];
-            setLanguagePriorities(languages);
-            console.log('✅ Loaded language preferences for search:', languages);
-          }
-        }
-      } catch (error) {
-        console.error('Failed to load language preferences:', error);
-      }
-    };
-    loadLanguagePreferences();
-  }, []);
 
   // Load detected mood from localStorage on mount
   React.useEffect(() => {
@@ -126,8 +99,8 @@ export default function SearchPage() {
     setHasSearched(true);
     
     try {
-      // SpotifyService now routes through backend with language filtering
-      const result = await spotifyService.searchMusic(searchQuery, 20, languagePriorities);
+      // SpotifyService now routes through backend
+      const result = await spotifyService.searchMusic(searchQuery, 20);
       console.log('Search result:', result);
       if (result) {
         console.log('Found tracks:', result.tracks.length);

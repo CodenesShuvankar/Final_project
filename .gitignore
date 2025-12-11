@@ -19,6 +19,8 @@ parts/
 sdist/
 var/
 wheels/
+
+
 *.egg-info/
 .installed.cfg
 *.egg
@@ -71,6 +73,24 @@ wandb/
 # Logs
 *.log
 logs/
+
+# Test files
+test_*.py
+*_test.py
+test_*.js
+*_test.js
+test_*.ts
+*_test.ts
+tests/
+__tests__/
+*.test.py
+*.test.js
+*.test.ts
+pytest_cache/
+.pytest_cache/
+coverage/
+.coverage
+htmlcov/
 
 # OS
 .DS_Store

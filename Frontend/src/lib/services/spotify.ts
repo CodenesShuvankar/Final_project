@@ -1,6 +1,5 @@
 import { mockPlaylists, mockTracks } from "@/lib/mockData"
 import { SpotifyAuthService } from "@/lib/services/spotifyAuth"
-import { filterTracksByLanguage, getLanguageDistribution } from "@/lib/utils/languageFilter"
 
 export interface SpotifyTrack {
   id: string
@@ -40,7 +39,7 @@ class SpotifyMusicServiceImpl {
     return SpotifyMusicServiceImpl.instance
   }
 
-  async searchMusic(query: string, limit: number = 20, languagePreferences?: string[]): Promise<SpotifySearchResult | null> {
+  async searchMusic(query: string, limit: number = 20): Promise<SpotifySearchResult | null> {
     if (!query.trim()) {
       return null
     }
@@ -66,7 +65,7 @@ class SpotifyMusicServiceImpl {
         
         if (data.success && data.results) {
           // Map backend results to SpotifyTrack format
-          let tracks = data.results.map((item: any) => ({
+          const tracks = data.results.map((item: any) => ({
             id: item.id || item.track_id || Math.random().toString(),
             name: item.name || item.track_name || 'Unknown Track',
             artists: Array.isArray(item.artists) ? item.artists : [item.artist || item.artist_name || 'Unknown Artist'],
@@ -77,19 +76,6 @@ class SpotifyMusicServiceImpl {
             external_urls: item.external_urls || { spotify: item.spotify_url || item.external_url || '#' },
             popularity: item.popularity || 50,
           }))
-          
-          // Apply language filtering if preferences provided
-          if (languagePreferences && languagePreferences.length > 0) {
-            console.log('🌍 Filtering search results by languages:', languagePreferences)
-            const beforeCount = tracks.length
-            tracks = filterTracksByLanguage(tracks, languagePreferences)
-            console.log(`🌍 Language filter: ${beforeCount} → ${tracks.length} tracks`)
-            
-            if (tracks.length > 0) {
-              const distribution = getLanguageDistribution(tracks)
-              console.log('📊 Language distribution:', distribution)
-            }
-          }
           
           return {
             tracks,
@@ -107,7 +93,7 @@ class SpotifyMusicServiceImpl {
     return this.searchMockTracks(query, limit)
   }
 
-  async getMoodRecommendations(mood: string, limit: number = 12, languagePreferences?: string[]): Promise<MusicRecommendationResult | null> {
+  async getMoodRecommendations(mood: string, limit: number = 12): Promise<MusicRecommendationResult | null> {
     try {
       // Try backend API first
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
@@ -136,7 +122,7 @@ class SpotifyMusicServiceImpl {
         
         if (data.success && data.recommendations) {
           // Map backend recommendations to SpotifyTrack format
-          let tracks = data.recommendations.map((rec: any) => ({
+          const tracks = data.recommendations.map((rec: any) => ({
             id: rec.id || rec.track_id || Math.random().toString(),
             name: rec.name || rec.track_name || 'Unknown Track',
             artists: Array.isArray(rec.artists) ? rec.artists : [rec.artist || 'Unknown Artist'],
@@ -147,19 +133,6 @@ class SpotifyMusicServiceImpl {
             external_urls: rec.external_urls || { spotify: rec.spotify_url || '#' },
             popularity: rec.popularity || 50,
           }))
-          
-          // Apply client-side language filtering as additional filter
-          if (languagePreferences && languagePreferences.length > 0) {
-            console.log('🌍 Applying additional language filter:', languagePreferences)
-            const beforeCount = tracks.length
-            tracks = filterTracksByLanguage(tracks, languagePreferences)
-            console.log(`🌍 Client filter: ${beforeCount} → ${tracks.length} tracks`)
-            
-            if (tracks.length > 0) {
-              const distribution = getLanguageDistribution(tracks)
-              console.log('📊 Language distribution:', distribution)
-            }
-          }
           
           return {
             results: { tracks, mood },

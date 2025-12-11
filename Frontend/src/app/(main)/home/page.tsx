@@ -12,7 +12,6 @@ import { SpotifyTrack, SpotifyMusicService } from '@/lib/services/spotify';
 import { VoiceEmotionService } from '@/lib/services/voiceEmotion';
 import { HistoryService } from '@/lib/services/historyService';
 import { LikedSongsService } from '@/lib/services/likedSongs';
-import { filterTracksByLanguage } from '@/lib/utils/languageFilter';
 import { Lightbulb, Clock, Loader2, Mic, Camera } from 'lucide-react';
 import Link from 'next/link';
 import { AutoMoodDetector } from '@/components/mood/AutoMoodDetector';
@@ -21,7 +20,7 @@ import { supabase } from '@/lib/supabaseClient';
 /**
  * Home page with personalized content and mood highlights
  */
-export default function HomePage() {
+export default function MainAppPage() {
   const { playerService } = usePlayerStore();
   const [recentlyPlayed, setRecentlyPlayed] = useState<SpotifyTrack[]>([]);
   const [trending, setTrending] = useState<SpotifyTrack[]>([]);
@@ -56,17 +55,10 @@ export default function HomePage() {
     const loadSpotifyData = async () => {
       setIsLoading(true);
       try {
-        // Check if user is authenticated
-        const { data: { session } } = await supabase.auth.getSession();
-        const isAuthenticated = !!session;
-        console.log('🔐 Authentication status:', isAuthenticated ? 'Logged in' : 'Guest');
+        // Initialize liked songs cache first to prevent multiple API calls
+        await likedSongsService.initializeCache();
         
-        // Initialize liked songs cache only if authenticated
-        if (isAuthenticated) {
-          await likedSongsService.initializeCache();
-        }
-        
-        // Load user interests from backend (or defaults if not authenticated)
+        // Load user interests from backend
         const preferences = await loadUserInterests();
         const languages = preferences?.language_priorities || ['English'];
         
@@ -80,20 +72,17 @@ export default function HomePage() {
             const moodTimestamp = parsed.timestamp ? new Date(parsed.timestamp).getTime() : 0;
             const age = Date.now() - moodTimestamp;
             
-            // Only use mood if it's less than 15 minutes old
-            if (age < 15 * 60 * 1000) {
+            // Only use mood if it's less than 15 minutes old AND not 'calm' (clear old calm data)
+            if (age < 15 * 60 * 1000 && parsed.mood !== 'calm') {
               moodToUse = parsed.mood || 'happy';
               setDetectedMood(moodToUse);
               console.log('✅ Using detected mood for recommendations:', moodToUse, '(age:', Math.floor(age / 60000), 'minutes)');
             } else {
               console.log('⏰ Detected mood is too old or invalid (', parsed.mood, '), using default: happy');
               localStorage.removeItem('detected_mood'); // Clear stale data
-              // Clear ALL mood recommendation caches (all moods, all languages)
-              ['happy', 'sad', 'angry', 'neutral', 'fear', 'disgust', 'surprise'].forEach(mood => {
-                ['English', 'Bengali', 'Hindi', 'Tamil', 'Telugu', 'Punjabi'].forEach(lang => {
-                  localStorage.removeItem(`cached_recommendations_${mood}_${lang}`);
-                });
-                localStorage.removeItem(`cached_recommendations_${mood}`); // Old format
+              // Clear ALL mood recommendation caches
+              ['calm', 'happy', 'sad', 'energetic', 'angry', 'neutral'].forEach(mood => {
+                localStorage.removeItem(`cached_recommendations_${mood}`);
               });
               console.log('🧹 Cleared all stale mood caches');
               moodToUse = 'happy';
@@ -102,28 +91,28 @@ export default function HomePage() {
           } catch (error) {
             console.error('Failed to parse mood:', error);
             localStorage.removeItem('detected_mood'); // Clear invalid data
+            localStorage.removeItem('cached_recommendations_calm');
           }
         } else {
           console.log('📝 No stored mood, using default: happy');
           setDetectedMood(null);
         }
 
-        // Check if we already have cached recommendations for this mood with current language
-        const primaryLanguage = languages[0] || 'English';
-        const cachedKey = `cached_recommendations_${moodToUse}_${primaryLanguage}`;
+        // Check if we already have cached recommendations for this mood
+        const cachedKey = `cached_recommendations_${moodToUse}`;
         const cached = localStorage.getItem(cachedKey);
         
         if (cached) {
           try {
-            const { tracks, timestamp, language } = JSON.parse(cached);
+            const { tracks, timestamp } = JSON.parse(cached);
             const age = Date.now() - timestamp;
             
-            // Use cache if less than 30 minutes old and language matches
-            if (age < 30 * 60 * 1000 && language === primaryLanguage) {
-              console.log('✅ Using cached recommendations for mood:', moodToUse, 'in', primaryLanguage);
+            // Use cache if less than 30 minutes old
+            if (age < 30 * 60 * 1000) {
+              console.log('✅ Using cached recommendations for mood:', moodToUse);
               setMoodBasedTracks(tracks);
             } else {
-              console.log('⏰ Mood cache expired or language changed, fetching new recommendations');
+              console.log('⏰ Mood cache expired, fetching new recommendations');
               await fetchMoodRecommendations(moodToUse, languages);
             }
           } catch (error) {
@@ -131,12 +120,11 @@ export default function HomePage() {
             await fetchMoodRecommendations(moodToUse, languages);
           }
         } else {
-          console.log('📭 No cache found, fetching fresh recommendations');
           await fetchMoodRecommendations(moodToUse, languages);
         }
 
         // Load trending and recently played (with cache)
-        await loadTrendingAndRecent(languages);
+        await loadTrendingAndRecent();
 
       } catch (error) {
         console.error('Failed to load Spotify data:', error);
@@ -180,7 +168,7 @@ export default function HomePage() {
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session) {
-          console.log('📝 No session, using default preferences');
+          console.log('📝 No session, skipping interest loading');
           return { language_priorities: ['English'] };
         }
 
@@ -228,7 +216,7 @@ export default function HomePage() {
         for (const genre of searchGenres) {
           // Add language to search query for better results
           const searchQuery = `${genre} ${primaryLanguage}`;
-          const result = await spotifyService.searchMusic(searchQuery, 4, languages);
+          const result = await spotifyService.searchMusic(searchQuery, 4);
           if (result && result.tracks.length > 0) {
             allTracks.push(...result.tracks);
           }
@@ -245,50 +233,45 @@ export default function HomePage() {
 
     const fetchMoodRecommendations = async (mood: string, languages: string[] = ['English']) => {
       const primaryLanguage = languages[0] || 'English';
-      console.log('🎵 Fetching recommendations for mood:', mood, 'with language:', primaryLanguage, 'from languages:', languages);
+      console.log('🎵 Fetching recommendations for mood:', mood, 'with language:', primaryLanguage);
       
       // Add language to mood query for better results
       const searchQuery = `${mood} ${primaryLanguage}`;
-      console.log('🔍 Final search query:', searchQuery);
-      const moodResult = await spotifyService.getMoodRecommendations(searchQuery, 8, languages);
+      const moodResult = await spotifyService.getMoodRecommendations(searchQuery, 8);
       if (moodResult) {
         setMoodBasedTracks(moodResult.results.tracks);
-        console.log('✅ Set', moodResult.results.tracks.length, 'tracks for mood:', mood);
         
-        // Cache the recommendations with language in key to avoid conflicts
-        localStorage.setItem(`cached_recommendations_${mood}_${primaryLanguage}`, JSON.stringify({
+        // Cache the recommendations
+        localStorage.setItem(`cached_recommendations_${mood}`, JSON.stringify({
           tracks: moodResult.results.tracks,
-          timestamp: Date.now(),
-          language: primaryLanguage
+          timestamp: Date.now()
         }));
         console.log('💾 Cached recommendations for mood:', mood, 'in', primaryLanguage);
       }
     };
 
-    const loadTrendingAndRecent = async (languages: string[] = ['English']) => {
-      const primaryLanguage = languages[0] || 'English';
-      
-      // Check cache for trending with language
-      const cachedTrending = localStorage.getItem(`cached_trending_${primaryLanguage}`);
+    const loadTrendingAndRecent = async () => {
+      // Check cache for trending
+      const cachedTrending = localStorage.getItem('cached_trending');
       if (cachedTrending) {
         try {
-          const { tracks, timestamp, language } = JSON.parse(cachedTrending);
+          const { tracks, timestamp } = JSON.parse(cachedTrending);
           const age = Date.now() - timestamp;
           
-          // Use cache if less than 30 minutes old and language matches
-          if (age < 30 * 60 * 1000 && language === primaryLanguage) {
-            console.log('✅ Using cached trending tracks in', primaryLanguage);
+          // Use cache if less than 30 minutes old
+          if (age < 30 * 60 * 1000) {
+            console.log('✅ Using cached trending tracks');
             setTrending(tracks);
           } else {
-            console.log('⏰ Trending cache expired or language changed, fetching new');
-            await fetchTrending(languages);
+            console.log('⏰ Trending cache expired, fetching new');
+            await fetchTrending();
           }
         } catch (error) {
           console.error('Failed to parse cached trending:', error);
-          await fetchTrending(languages);
+          await fetchTrending();
         }
       } else {
-        await fetchTrending(languages);
+        await fetchTrending();
       }
 
       // Check cache for recently played
@@ -315,14 +298,12 @@ export default function HomePage() {
       }
     };
 
-    const fetchTrending = async (languages: string[] = ['English']) => {
-      const primaryLanguage = languages[0] || 'English';
-      console.log('🎵 Fetching trending tracks via backend with language:', primaryLanguage);
+    const fetchTrending = async () => {
+      console.log('🎵 Fetching trending tracks via backend');
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       
       try {
-        const url = `${apiUrl}/recommendations?limit=6&language=${encodeURIComponent(primaryLanguage)}`;
-        const response = await fetch(url);
+        const response = await fetch(`${apiUrl}/recommendations?limit=6`);
         if (response.ok) {
           const data = await response.json();
           if (data.success && data.recommendations) {
@@ -338,12 +319,11 @@ export default function HomePage() {
             }));
             
             setTrending(tracks);
-            localStorage.setItem(`cached_trending_${primaryLanguage}`, JSON.stringify({
+            localStorage.setItem('cached_trending', JSON.stringify({
               tracks: tracks,
-              timestamp: Date.now(),
-              language: primaryLanguage
+              timestamp: Date.now()
             }));
-            console.log('💾 Cached trending tracks in', primaryLanguage, ':', tracks.length);
+            console.log('💾 Cached trending tracks:', tracks.length);
             return;
           }
         }
@@ -352,17 +332,12 @@ export default function HomePage() {
       }
       
       // Fallback to search if recommendations fail
-      const searchQuery = primaryLanguage !== 'English' 
-        ? `trending ${primaryLanguage} songs 2025` 
-        : 'trending hits 2025';
-      console.log('🔍 Fallback search for trending:', searchQuery);
-      const trendingResult = await spotifyService.searchMusic(searchQuery, 6);
+      const trendingResult = await spotifyService.searchMusic('trending hits 2024', 6);
       if (trendingResult) {
         setTrending(trendingResult.tracks);
-        localStorage.setItem(`cached_trending_${primaryLanguage}`, JSON.stringify({
+        localStorage.setItem('cached_trending', JSON.stringify({
           tracks: trendingResult.tracks,
-          timestamp: Date.now(),
-          language: primaryLanguage
+          timestamp: Date.now()
         }));
         console.log('💾 Cached trending tracks');
       }
@@ -377,13 +352,21 @@ export default function HomePage() {
         const { data: { session } } = await supabase.auth.getSession();
         
         if (!session?.access_token) {
-          console.log('⚠️ No auth token, recently played only available for logged-in users');
-          setRecentlyPlayed([]);
+          console.log('⚠️ No auth token, using fallback - latest releases');
+          // Fallback to different search than trending
+          const recentResult = await spotifyService.searchMusic('new releases 2024', 6);
+          if (recentResult) {
+            setRecentlyPlayed(recentResult.tracks);
+            localStorage.setItem('cached_recent', JSON.stringify({
+              tracks: recentResult.tracks,
+              timestamp: Date.now()
+            }));
+          }
           return;
         }
         
-        // Fetch from listening history database (fetch more to ensure 6 unique after deduplication)
-        const response = await fetch(`${apiUrl}/listening-history?limit=20`, {
+        // Fetch from listening history database
+        const response = await fetch(`${apiUrl}/listening-history?limit=6`, {
           headers: {
             'Authorization': `Bearer ${session.access_token}`
           }
@@ -392,8 +375,7 @@ export default function HomePage() {
         if (response.ok) {
           const data = await response.json();
           if (data.success && data.history && data.history.length > 0) {
-            // Map to track format
-            const allTracks = data.history.map((h: any) => ({
+            const tracks = data.history.map((h: any) => ({
               id: h.song_id,
               name: h.song_name,
               artists: [h.artist_name],
@@ -404,115 +386,36 @@ export default function HomePage() {
               preview_url: null
             }));
             
-            // Remove duplicates - keep only the first occurrence (most recent) of each song_id
-            const seenIds = new Set<string>();
-            let uniqueTracks = allTracks.filter((track: any) => {
-              if (seenIds.has(track.id)) {
-                return false;
-              }
-              seenIds.add(track.id);
-              return true;
-            });
-            
-            // Apply language filtering if preferences exist
-            if (languagePriorities.length > 0) {
-              console.log('🌍 Filtering recently played by languages:', languagePriorities);
-              const beforeCount = uniqueTracks.length;
-              uniqueTracks = filterTracksByLanguage(uniqueTracks, languagePriorities);
-              console.log(`🌍 Language filter on history: ${beforeCount} → ${uniqueTracks.length} tracks`);
-            }
-            
-            // Limit to 6 unique tracks
-            const tracks = uniqueTracks.slice(0, 6);
-            
             setRecentlyPlayed(tracks);
             localStorage.setItem('cached_recent', JSON.stringify({
               tracks: tracks,
               timestamp: Date.now()
             }));
-            console.log('💾 Cached recent tracks from listening history:', tracks.length, 'unique tracks');
+            console.log('💾 Cached recent tracks from listening history:', tracks.length);
             return;
           } else {
-            console.log('📫 No listening history found');
-            setRecentlyPlayed([]);
+            console.log('📭 No listening history found, using fallback');
           }
         }
       } catch (error) {
         console.error('Failed to fetch listening history:', error);
-        setRecentlyPlayed([]);
+      }
+      
+      // Fallback to search if listening history is empty or fails
+      // Use different search terms than trending section
+      console.log('🔄 Using fallback: searching for latest releases');
+      const recentResult = await spotifyService.searchMusic('latest hits 2024', 6);
+      if (recentResult) {
+        setRecentlyPlayed(recentResult.tracks);
+        localStorage.setItem('cached_recent', JSON.stringify({
+          tracks: recentResult.tracks,
+          timestamp: Date.now()
+        }));
+        console.log('💾 Cached fallback recent tracks');
       }
     };
 
     loadSpotifyData();
-  }, []);
-
-  // Listen for listening history updates to refresh recently played
-  useEffect(() => {
-    const handleHistoryUpdate = async () => {
-      console.log('👂 History update event received - refreshing recently played');
-      
-      // Clear the cache
-      localStorage.removeItem('cached_recent');
-      
-      // Fetch fresh data
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        
-        if (session?.access_token) {
-          const response = await fetch(`${apiUrl}/listening-history?limit=20`, {
-            headers: { 'Authorization': `Bearer ${session.access_token}` }
-          });
-          
-          if (response.ok) {
-            const data = await response.json();
-            if (data.success && data.history && data.history.length > 0) {
-              // Map to track format
-              const allTracks = data.history.map((h: any) => ({
-                id: h.song_id,
-                name: h.song_name,
-                artists: [h.artist_name],
-                album: h.album_name || 'Unknown Album',
-                duration_ms: h.duration_ms || 180000,
-                image_url: h.image_url || null,
-                external_urls: { spotify: h.spotify_url || '#' },
-                preview_url: null
-              }));
-              
-            // Remove duplicates - keep only the first occurrence (most recent) of each song_id
-            const seenIds = new Set<string>();
-            let uniqueTracks = allTracks.filter((track: any) => {
-              if (seenIds.has(track.id)) {
-                return false;
-              }
-              seenIds.add(track.id);
-              return true;
-            });
-            
-            // Apply language filtering if preferences exist
-            if (languagePriorities.length > 0) {
-              console.log('🌍 Filtering recently played by languages:', languagePriorities);
-              const beforeCount = uniqueTracks.length;
-              uniqueTracks = filterTracksByLanguage(uniqueTracks, languagePriorities);
-              console.log(`🌍 Language filter on history: ${beforeCount} → ${uniqueTracks.length} tracks`);
-            }
-            
-            // Limit to 6 unique tracks
-            const tracks = uniqueTracks.slice(0, 6);              setRecentlyPlayed(tracks);
-              console.log('✅ Refreshed recently played:', tracks.length, 'unique tracks');
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Failed to refresh recently played:', error);
-      }
-    };
-
-    window.addEventListener('historyUpdated', handleHistoryUpdate as EventListener);
-    
-    return () => {
-      window.removeEventListener('historyUpdated', handleHistoryUpdate as EventListener);
-    };
   }, []);
 
   // Listen for mood detection updates
@@ -531,58 +434,24 @@ export default function HomePage() {
             setDetectedMood(newMood);
             setIsLoading(true);
             
-            // Clear old caches for previous mood (all languages)
+            // Clear old cache for previous mood
             if (detectedMood) {
-              // Clear all language variations of the old mood
-              ['English', 'Bengali', 'Hindi'].forEach(lang => {
-                localStorage.removeItem(`cached_recommendations_${detectedMood}_${lang}`);
-              });
-              // Also clear old format cache
               localStorage.removeItem(`cached_recommendations_${detectedMood}`);
             }
             
-            // Fetch latest language priorities from backend
-            let primaryLanguage = languagePriorities[0] || 'English';
-            let freshLanguages = languagePriorities;
-            
-            try {
-              const { data: { session } } = await supabase.auth.getSession();
-              if (session) {
-                const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
-                const response = await fetch(`${apiUrl}/api/user-preferences`, {
-                  headers: { 'Authorization': `Bearer ${session.access_token}` }
-                });
-                if (response.ok) {
-                  const data = await response.json();
-                  freshLanguages = data.preferences?.language_priorities || ['English'];
-                  primaryLanguage = freshLanguages[0] || 'English';
-                  // Update the state with fresh preferences
-                  setLanguagePriorities(freshLanguages);
-                  console.log('✅ Fetched fresh language priorities:', freshLanguages);
-                } else {
-                  console.warn('⚠️ Preferences API returned:', response.status);
-                }
-              } else {
-                console.warn('⚠️ No active session');
-              }
-            } catch (error) {
-              console.error('❌ Error fetching fresh preferences:', error);
-              console.log('📌 Using state language priorities:', languagePriorities);
-            }
-            
+            // Fetch new recommendations with language priority
+            const primaryLanguage = languagePriorities[0] || 'English';
             const searchQuery = `${newMood} ${primaryLanguage}`;
-            console.log('🔍 Searching for mood recommendations with query:', searchQuery, '(Language:', primaryLanguage, ')');
+            console.log('🔍 Searching with language priority:', searchQuery);
             
             const moodResult = await spotifyService.getMoodRecommendations(searchQuery, 8);
             if (moodResult) {
               setMoodBasedTracks(moodResult.results.tracks);
-              console.log('✅ Updated mood-based tracks with', moodResult.results.tracks.length, 'songs in', primaryLanguage);
               
-              // Cache the new recommendations with language
-              localStorage.setItem(`cached_recommendations_${newMood}_${primaryLanguage}`, JSON.stringify({
+              // Cache the new recommendations
+              localStorage.setItem(`cached_recommendations_${newMood}`, JSON.stringify({
                 tracks: moodResult.results.tracks,
-                timestamp: Date.now(),
-                language: primaryLanguage
+                timestamp: Date.now()
               }));
               console.log('💾 Cached new recommendations for mood:', newMood, 'in', primaryLanguage);
             }
@@ -646,7 +515,7 @@ export default function HomePage() {
             const moodTimestamp = new Date(moodData.timestamp).getTime();
             const age = Date.now() - moodTimestamp;
             
-            if (age < 15 * 60 * 1000) {
+            if (age < 15 * 60 * 1000 && moodData.mood !== 'calm') {
               const newMood = moodData.mood || 'happy';
               if (newMood !== detectedMood) {
                 console.log('🔄 Detected mood changed on focus:', detectedMood, '→', newMood);
@@ -680,37 +549,17 @@ export default function HomePage() {
     year: 2024,
     explicit: false,
     liked: false,
-    spotifyUrl: track.external_urls?.spotify,
   });
 
   const handlePlayTrack = (track: SpotifyTrack) => {
-    console.log('🎵 handlePlayTrack called for:', track.name);
-    console.log('📊 Track data:', track);
-    console.log('🔗 external_urls:', track.external_urls);
-    
     // Open Spotify URL directly since we don't have streaming capability
     const spotifyUrl = track.external_urls?.spotify;
-    console.log('🌐 Spotify URL to open:', spotifyUrl);
-    
-    // Validate Spotify URL before opening
-    if (spotifyUrl && spotifyUrl.trim() !== '' && spotifyUrl.startsWith('http')) {
-      console.log('✅ Opening valid Spotify URL in new tab:', spotifyUrl);
-      const newWindow = window.open(spotifyUrl, '_blank', 'noopener,noreferrer');
-      if (!newWindow) {
-        console.error('❌ Failed to open new window - popup might be blocked');
-        alert('Please allow popups to play songs on Spotify');
-      }
+    if (spotifyUrl) {
+      window.open(spotifyUrl, '_blank', 'noopener,noreferrer');
     } else {
       // Fallback: search for the track on Spotify
-      console.warn('⚠️ Invalid or missing Spotify URL:', spotifyUrl);
       const searchQuery = encodeURIComponent(`${track.name} ${track.artists.join(' ')}`);
-      const fallbackUrl = `https://open.spotify.com/search/${searchQuery}`;
-      console.log('🔍 Using fallback search URL:', fallbackUrl);
-      const newWindow = window.open(fallbackUrl, '_blank', 'noopener,noreferrer');
-      if (!newWindow) {
-        console.error('❌ Failed to open new window - popup might be blocked');
-        alert('Please allow popups to play songs on Spotify');
-      }
+      window.open(`https://open.spotify.com/search/${searchQuery}`, '_blank', 'noopener,noreferrer');
     }
     
     // Track in listening history
@@ -859,17 +708,6 @@ export default function HomePage() {
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             <span className="ml-2 text-muted-foreground">Loading music...</span>
           </div>
-        ) : recentlyPlayed.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-12 text-center">
-            <Clock className="h-12 w-12 text-muted-foreground mb-4" />
-            <h3 className="text-lg font-medium mb-2">No listening history yet</h3>
-            <p className="text-sm text-muted-foreground mb-4">
-              Start playing songs to see your recently played tracks here
-            </p>
-            <Button variant="outline" asChild>
-              <Link href="/search">Discover Music</Link>
-            </Button>
-          </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
             {recentlyPlayed.map((track) => (
@@ -951,7 +789,7 @@ export default function HomePage() {
           <Link href="/suggest">
             <Card className="gradient-bg-purple text-white border-0 cursor-pointer hover:scale-105 transition-transform shadow-lg">
               <CardContent className="p-6 text-center">
-                <h3 className="font-semibold mb-2">Excited Vibes</h3>
+                <h3 className="font-semibold mb-2">Energetic</h3>
                 <p className="text-sm opacity-90">High-energy beats to pump you up</p>
               </CardContent>
             </Card>

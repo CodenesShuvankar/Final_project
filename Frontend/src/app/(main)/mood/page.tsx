@@ -3,7 +3,7 @@
 import * as React from 'react';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { MoodDetectorPanel } from '@/components/mood/MoodDetectorPanelIntegrated';
+import { MoodDetectorPanel } from '@/components/mood/MoodDetectorPanelMediaPipe';
 import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { MultimodalAnalysis } from '@/lib/services/voiceEmotion';
@@ -47,7 +47,7 @@ export default function MoodPage() {
     }
   };
 
-  const handleMoodDetected = async (mood: string, analysis?: MultimodalAnalysis, recommendations?: any[]) => {
+  const handleMoodDetected = async (mood: string, analysis?: MultimodalAnalysis) => {
     setCurrentMood(mood);
     setCurrentAnalysis(analysis || null);
     
@@ -64,21 +64,6 @@ export default function MoodPage() {
       localStorage.setItem('detected_mood', JSON.stringify(moodData));
       if (analysis) {
         localStorage.setItem('mood_analysis', JSON.stringify(analysis));
-      }
-      
-      // Store recommendations if available so main page doesn't refetch
-      if (recommendations && recommendations.length > 0) {
-        const authService = AuthService.getInstance();
-        const user = await authService.getUserProfile();
-        const preferences = user?.preferences || {};
-        const primaryLanguage = preferences.language_priorities?.[0] || 'English';
-        
-        localStorage.setItem(`cached_recommendations_${mood}_${primaryLanguage}`, JSON.stringify({
-          tracks: recommendations,
-          timestamp: Date.now(),
-          language: primaryLanguage
-        }));
-        console.log('💾 Saved', recommendations.length, 'recommendations for mood:', mood, 'in', primaryLanguage);
       }
       
       // Dispatch custom event to notify other components

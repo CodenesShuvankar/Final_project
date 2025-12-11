@@ -25,7 +25,6 @@ export interface Track {
   explicit: boolean;
   liked?: boolean;
   previewUrl?: string | null;
-  spotifyUrl?: string;
 }
 
 export interface Playlist {
@@ -149,7 +148,7 @@ export const mockTracks: Track[] = [
     duration: 212,
     coverUrl: "https://picsum.photos/seed/track001/600/600",
     genre: "Electronic",
-    mood: ["happy", "uplifting"],
+    mood: ["energetic", "uplifting"],
     energy: 0.82,
     valence: 0.64,
     tempo: 124,
@@ -165,8 +164,8 @@ export const mockTracks: Track[] = [
     duration: 198,
     coverUrl: "https://picsum.photos/seed/track002/600/600",
     genre: "Indie",
-    mood: ["happy"],
-    energy: 0.55,
+    mood: ["happy", "calm"],
+    energy: 0.54,
     valence: 0.78,
     tempo: 98,
     year: 2022,
@@ -229,7 +228,7 @@ export const mockTracks: Track[] = [
     duration: 207,
     coverUrl: "https://picsum.photos/seed/track006/600/600",
     genre: "Jazz",
-    mood: ["sad", "romantic"],
+    mood: ["calm", "romantic"],
     energy: 0.33,
     valence: 0.67,
     tempo: 84,
@@ -293,7 +292,7 @@ export const mockTracks: Track[] = [
     duration: 205,
     coverUrl: "https://picsum.photos/seed/track010/600/600",
     genre: "Indie",
-    mood: ["melancholy", "sad"],
+    mood: ["melancholy", "calm"],
     energy: 0.42,
     valence: 0.44,
     tempo: 102,
@@ -372,7 +371,65 @@ export const mockAlbums: Album[] = [
   },
 ];
 
-export const mockPlaylists: Playlist[] = [];
+export const mockPlaylists: Playlist[] = [
+  {
+    id: "playlist-focus-flow",
+    title: "Focus Flow",
+    description: "Stay in the zone with mellow electronica and lo-fi beats.",
+    coverUrl: "https://picsum.photos/seed/playlist001/600/600",
+    tracks: ["track-003", "track-007", "track-006", "track-010"],
+    trackCount: 25,
+    createdAt: daysAgo(60),
+    updatedAt: daysAgo(2),
+    public: true,
+    mood: "focus",
+    followers: 12845,
+    creator: "VibeTune",
+  },
+  {
+    id: "playlist-sunrise-vibes",
+    title: "Sunrise Vibes",
+    description: "Start your day with feel-good indie and acoustic tunes.",
+    coverUrl: "https://picsum.photos/seed/playlist002/600/600",
+    tracks: ["track-002", "track-008", "track-001", "track-009"],
+    trackCount: 32,
+    createdAt: daysAgo(120),
+    updatedAt: daysAgo(14),
+    public: true,
+    mood: "happy",
+    followers: 9842,
+    creator: "Curated by Vibe AI",
+  },
+  {
+    id: "playlist-late-night-drive",
+    title: "Late Night Drive",
+    description: "Moody synths and midnight melodies for your night rides.",
+    coverUrl: "https://picsum.photos/seed/playlist003/600/600",
+    tracks: ["track-001", "track-007", "track-004", "track-009"],
+    trackCount: 28,
+    createdAt: daysAgo(30),
+    updatedAt: daysAgo(4),
+    public: false,
+    collaborative: true,
+    mood: "chill",
+    followers: 1250,
+    creator: "You",
+  },
+  {
+    id: "playlist-workout-boost",
+    title: "Workout Boost",
+    description: "High-energy anthems to keep you moving.",
+    coverUrl: "https://picsum.photos/seed/playlist004/600/600",
+    tracks: ["track-005", "track-001", "track-008"],
+    trackCount: 40,
+    createdAt: daysAgo(10),
+    updatedAt: daysAgo(1),
+    public: true,
+    mood: "energetic",
+    followers: 15230,
+    creator: "VibeTune",
+  },
+];
 
 export const mockFeatureRequests: FeatureRequest[] = [
   {

@@ -20,7 +20,7 @@ export interface VoiceEmotionResult {
 export interface MultimodalAnalysis {
   merged_emotion: string
   merged_confidence: number
-  agreement: "strong" | "moderate" | "weak" | "conflict"
+  agreement: "strong" | "moderate" | "weak" | "conflict" | "fusion"
   summary: string
   explanation: string
   voice_prediction: VoiceEmotionPrediction
@@ -28,6 +28,7 @@ export interface MultimodalAnalysis {
     emotion: string
     confidence: number
   }
+  fusion_used?: boolean
 }
 
 export interface MultimodalResult extends VoiceEmotionResult {
@@ -139,6 +140,7 @@ class VoiceEmotionServiceImpl {
       // Try backend API first
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
       console.log(`🔗 Calling backend API: ${apiUrl}/analyze-voice-and-face`)
+      console.log(`📦 Audio size: ${audioBlob.size} bytes, Image size: ${imageBlob.size} bytes`)
       
       const formData = new FormData()
       formData.append('audio_file', audioBlob, 'recording.wav')
@@ -157,6 +159,8 @@ class VoiceEmotionServiceImpl {
         headers,
         body: formData,
       })
+
+      console.log(`📡 Response status: ${response.status} ${response.statusText}`)
 
       if (response.ok) {
         const data = await response.json()
@@ -193,7 +197,13 @@ class VoiceEmotionServiceImpl {
             },
             recommendations: data.recommendations ? this.generateRecommendations(analysis.merged_emotion) : undefined,
           }
+        } else {
+          throw new Error(data.error || 'Analysis failed')
         }
+      } else {
+        const errorText = await response.text()
+        console.error(`❌ Backend returned ${response.status}:`, errorText)
+        throw new Error(`HTTP ${response.status}: ${errorText}`)
       }
       
       console.warn('⚠️ Backend API failed, falling back to mock analysis')
@@ -242,22 +252,142 @@ class VoiceEmotionServiceImpl {
     }
   }
 
+  /**
+   * Analyze audio file using backend /analyze-voice endpoint
+   * This is used when camera is unavailable and only audio is recorded
+   */
+  async analyzeAudio(audioBlob: Blob): Promise<MultimodalResult> {
+    const voiceResult = await this.analyzeVoiceEmotion(audioBlob)
+    
+    if (!voiceResult.success || !voiceResult.prediction) {
+      return {
+        success: false,
+        error: voiceResult.error || "Voice analysis failed",
+      }
+    }
+
+    // Create a minimal multimodal analysis from voice-only data
+    const analysis: MultimodalAnalysis = {
+      merged_emotion: voiceResult.prediction.emotion,
+      merged_confidence: voiceResult.prediction.confidence,
+      agreement: 'strong',
+      summary: `Voice-only analysis detected ${voiceResult.prediction.emotion} emotion`,
+      explanation: `Analysis based on voice characteristics only. No video data available.`,
+      voice_prediction: voiceResult.prediction,
+      face_prediction: {
+        emotion: 'unknown',
+        confidence: 0,
+      },
+      fusion_used: false,
+    }
+
+    return {
+      success: true,
+      prediction: voiceResult.prediction,
+      analysisId: voiceResult.analysisId,
+      analysis,
+      recommendations: this.generateRecommendations(analysis.merged_emotion),
+    }
+  }
+
+  /**
+   * Analyze video file with audio using backend /analyze endpoint
+   * This sends the video to the fusion model for processing
+   */
+  async analyzeVideo(videoBlob: Blob, trackLimit = 20): Promise<MultimodalResult> {
+    if (!videoBlob || videoBlob.size === 0) {
+      return {
+        success: false,
+        error: "No video provided",
+      }
+    }
+
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+      console.log(`🔗 Calling backend API: ${apiUrl}/analyze`)
+      
+      const formData = new FormData()
+      formData.append('file', videoBlob, 'recording.webm')
+
+      // Get auth token if user is logged in
+      const headers: HeadersInit = {}
+      const { data: { session } } = await supabase.auth.getSession()
+      if (session?.access_token) {
+        headers['Authorization'] = `Bearer ${session.access_token}`
+        console.log('🔑 Including auth token in request')
+      }
+
+      const response = await fetch(`${apiUrl}/analyze?limit=${trackLimit}`, {
+        method: 'POST',
+        headers,
+        body: formData,
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        console.log('✅ Backend video analysis response:', data)
+        
+        if (data.success && data.analysis) {
+          const analysis = data.analysis
+          
+          return {
+            success: true,
+            prediction: {
+              emotion: analysis.voice_prediction?.emotion || analysis.merged_emotion,
+              confidence: analysis.voice_prediction?.confidence || analysis.merged_confidence,
+              energy: analysis.voice_prediction?.energy || 0.7,
+              valence: analysis.voice_prediction?.valence || 0.7,
+              pitch: analysis.voice_prediction?.pitch,
+              speakingRate: analysis.voice_prediction?.speaking_rate,
+            },
+            analysisId: `video-${Date.now()}`,
+            analysis: {
+              merged_emotion: analysis.merged_emotion || analysis.final_emotion,
+              merged_confidence: analysis.merged_confidence || analysis.final_confidence,
+              agreement: analysis.agreement || 'fusion',
+              summary: analysis.summary || analysis.explanation,
+              explanation: analysis.explanation,
+              voice_prediction: {
+                emotion: analysis.voice_prediction?.emotion || 'neutral',
+                confidence: analysis.voice_prediction?.confidence || 0.5,
+                energy: 0.7,
+                valence: 0.7,
+              },
+              face_prediction: {
+                emotion: analysis.face_prediction?.emotion || 'neutral',
+                confidence: analysis.face_prediction?.confidence || 0.5,
+              },
+              fusion_used: data.mode === 'fusion' || analysis.analysis_type === 'fusion',
+            },
+            recommendations: data.recommendations || this.generateRecommendations(analysis.merged_emotion || analysis.final_emotion),
+          }
+        } else {
+          throw new Error(data.error || 'Video analysis failed')
+        }
+      } else {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || `Server returned ${response.status}`)
+      }
+      
+    } catch (error) {
+      console.error('❌ Backend video analysis error:', error)
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to analyze video. Check if backend is running.',
+      }
+    }
+  }
+
   getEmotionEmoji(mood: string): string {
     switch (mood.toLowerCase()) {
       case "happy":
         return "😊"
       case "sad":
         return "😢"
-      case "angry":
-        return "😠"
-      case "neutral":
-        return "😐"
-      case "fear":
-        return "😨"
-      case "disgust":
-        return "🤢"
-      case "surprise":
-        return "😲"
+      case "energetic":
+        return "⚡"
+      case "calm":
+        return "🧘"
       case "focus":
         return "🎯"
       case "romantic":
@@ -355,16 +485,10 @@ class VoiceEmotionServiceImpl {
         return ["Upbeat pop anthems", "Feel-good dance tracks", "Bright indie tunes"]
       case "sad":
         return ["Warm acoustic ballads", "Ambient piano pieces", "Reflective lo-fi beats"]
-      case "angry":
-        return ["High-energy rock", "Intense metal tracks", "Aggressive hip-hop"]
-      case "neutral":
-        return ["Balanced pop songs", "Easy-listening tracks", "Versatile playlists"]
-      case "fear":
-        return ["Calming ambient", "Soothing classical", "Peaceful instrumentals"]
-      case "disgust":
-        return ["Alternative rock", "Punk anthems", "Raw indie tracks"]
-      case "surprise":
-        return ["Unexpected electronic", "Dynamic pop", "Genre-bending tracks"]
+      case "energetic":
+        return ["High-tempo electronic", "Driving alt-rock", "Motivational hip-hop"]
+      case "calm":
+        return ["Gentle lo-fi instrumentals", "Smooth jazz evenings", "Rainy day acoustics"]
       case "focus":
         return ["Deep focus electronica", "Soft piano concentration", "Low-key ambient textures"]
       case "chill":

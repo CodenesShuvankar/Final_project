@@ -1,8 +1,47 @@
-from deepface import DeepFace
 import cv2
 import logging
+import numpy as np
+import torch
+from hsemotion.facial_emotions import HSEmotionRecognizer
 
 logger = logging.getLogger(__name__)
+
+# Patch torch.load to allow trusted checkpoints (bypass weights_only strict mode)
+original_load = torch.load
+def safe_load_wrapper(*args, **kwargs):
+    if 'weights_only' not in kwargs:
+        kwargs['weights_only'] = False
+    return original_load(*args, **kwargs)
+torch.load = safe_load_wrapper
+
+# Map HSEmotion output to standard 7-emotion labels
+EMOTION_MAPPING = {
+    "happiness": "happy",
+    "happy": "happy",
+    "anger": "angry",
+    "angry": "angry",
+    "disgust": "disgust",
+    "fear": "fear",
+    "sadness": "sad",
+    "sad": "sad",
+    "surprise": "surprise",
+    "neutral": "neutral"
+}
+
+# Lazy singleton to avoid reloading weights repeatedly
+_hse_recognizer = None
+
+
+def _get_recognizer():
+    global _hse_recognizer
+    if _hse_recognizer is None:
+        try:
+            _hse_recognizer = HSEmotionRecognizer(model_name="enet_b0_8_best_vgaf", device="cpu")
+            logger.info("✅ HSEmotion face model loaded (enet_b0_8_best_vgaf)")
+        except Exception as e:
+            logger.error("Failed to load HSEmotion model: %s", e)
+            raise
+    return _hse_recognizer
 
 def detect_expression(image_path):
     """
@@ -41,52 +80,50 @@ def detect_expression(image_path):
                 "warning": "No camera available, using neutral fallback"
             }
         
-        # Try with face detection first
+        # HSEmotion inference (RGB expected)
         try:
-            results = DeepFace.analyze(
-                img_path=image_path, 
-                actions=['emotion'],
-                enforce_detection=True,
-                detector_backend='opencv'
-            )
-        except ValueError as face_error:
-            # If no face detected, retry with enforce_detection=False
-            logger.warning(f"No face detected with strict mode, retrying with lenient mode: {face_error}")
-            try:
-                results = DeepFace.analyze(
-                    img_path=image_path, 
-                    actions=['emotion'],
-                    enforce_detection=False,
-                    detector_backend='opencv'
-                )
-            except Exception as e2:
-                # If both fail, return neutral fallback
-                logger.warning(f"Both detection modes failed: {str(e2)}")
-                return {
-                    "success": True,
-                    "emotion": "neutral",
-                    "confidence": 0.3,
-                    "all_emotions": {"neutral": 0.3},
-                    "warning": "Face detection failed, using neutral fallback"
-                }
-        
-        detected_emotion = results[0]['dominant_emotion']
-        all_emotions = results[0]['emotion']
-        
-        # Normalize emotion names to lowercase
-        all_emotions = {k.lower(): v/100.0 for k, v in all_emotions.items()}
-        
-        # Get confidence (as a decimal, not percentage)
-        confidence = all_emotions.get(detected_emotion.lower(), 0.0)
-        
-        logger.info(f"Face emotion detected: {detected_emotion} (confidence: {confidence:.2%})")
-        
-        return {
-            "success": True,
-            "emotion": detected_emotion.lower(),
-            "confidence": confidence,
-            "all_emotions": all_emotions
-        }
+            recognizer = _get_recognizer()
+            img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            emotion, scores = recognizer.predict_emotions(img_rgb, logits=False)
+
+            if isinstance(scores, dict):
+                # Map HSEmotion keys to standard emotions
+                all_emotions = {}
+                for k, v in scores.items():
+                    normalized_key = EMOTION_MAPPING.get(k.lower(), k.lower())
+                    all_emotions[normalized_key] = float(v)
+            elif isinstance(scores, (list, tuple, np.ndarray)):
+                # If scores is array-like aligned with recognizer.emotions
+                labels = getattr(recognizer, "emotions", ["angry", "disgust", "fear", "happy", "neutral", "sad", "surprise"])
+                all_emotions = {}
+                for i, lbl in enumerate(labels):
+                    normalized_label = EMOTION_MAPPING.get(lbl.lower(), lbl.lower())
+                    all_emotions[normalized_label] = float(scores[i])
+            else:
+                all_emotions = {"neutral": 0.3}
+
+            # Normalize emotion name
+            raw_emotion = emotion.lower() if isinstance(emotion, str) else max(all_emotions, key=all_emotions.get)
+            detected_emotion = EMOTION_MAPPING.get(raw_emotion, raw_emotion)
+            confidence = all_emotions.get(detected_emotion, 0.0)
+
+            logger.info(f"Face emotion detected (HSE): {detected_emotion} (confidence: {confidence:.2%})")
+
+            return {
+                "success": True,
+                "emotion": detected_emotion,
+                "confidence": confidence,
+                "all_emotions": all_emotions
+            }
+        except Exception as e2:
+            logger.warning(f"HSEmotion failed, using neutral fallback: {e2}")
+            return {
+                "success": True,
+                "emotion": "neutral",
+                "confidence": 0.3,
+                "all_emotions": {"neutral": 0.3},
+                "warning": "Face detection failed, using neutral fallback"
+            }
         
     except Exception as e:
         logger.error(f"Error detecting facial expression: {e}")
@@ -100,20 +137,3 @@ def detect_expression(image_path):
         }
 
 
-# def detect_expression_simple(image_path):
-#     """
-#     Simple version that returns just the emotion string (for backward compatibility)
-    
-#     Args:
-#         image_path: Path to image file
-        
-#     Returns:
-#         String with detected emotion name
-#     """
-#     try:
-#         results = DeepFace.analyze(img_path=image_path, actions=['emotion'])
-#         detected_emotion = results[0]['dominant_emotion']
-#         return detected_emotion.lower()
-#     except Exception as e:
-#         logger.error(f"Error detecting facial expression: {e}")
-#         raise

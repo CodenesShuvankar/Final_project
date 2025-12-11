@@ -2,17 +2,21 @@
 
 import { useEffect, useState } from 'react';
 import { AutoMoodDetectionService } from '@/lib/services/autoMoodDetection';
-import { MoodAnalysisService } from '@/lib/services/moodAnalysisService';
 import { supabase } from '@/lib/supabaseClient';
 import { Loader2 } from 'lucide-react';
 
 /**
  * Auto mood detector component
  * Runs mood detection:
- * - On first login/page load
+ * - Once after login (with 3 second delay)
  * - Every 30 minutes automatically
  * - Only when user is authenticated
  */
+
+// Global flags to prevent duplicate detection runs (persists across React remounts)
+let globalIsRunning = false;
+let globalInitialTimer: NodeJS.Timeout | null = null;
+
 export function AutoMoodDetector() {
   const [isDetecting, setIsDetecting] = useState(false);
   const [showNotification, setShowNotification] = useState(false);
@@ -32,6 +36,11 @@ export function AutoMoodDetector() {
 
     // Run mood detection
     const runAutoDetection = async (isScheduled: boolean = false) => {
+      // Prevent duplicate runs using global flag
+      if (globalIsRunning) {
+        return;
+      }
+      
       // Check authentication first
       const authed = await checkAuth();
       if (!authed) {
@@ -50,7 +59,7 @@ export function AutoMoodDetector() {
 
       const autoMoodService = AutoMoodDetectionService.getInstance();
 
-      // Check cooldown (but allow initial page load and scheduled detections)
+      // Check cooldown (but allow scheduled detections)
       if (!isScheduled && autoMoodService.hasAlreadyDetected()) {
         const lastDetection = localStorage.getItem('auto_mood_last_detection');
         if (lastDetection) {
@@ -60,128 +69,150 @@ export function AutoMoodDetector() {
         return;
       }
 
-      console.log('🚀 Cooldown passed or scheduled detection, proceeding...');
+     
+
+      // Set global flag to prevent duplicate runs
+      globalIsRunning = true;
 
       // Show notification
       setShowNotification(true);
       setIsDetecting(true);
-      console.log('🔔 Showing auto mood detection notification');
+      
 
       console.log(`🎯 Starting auto mood detection (scheduled: ${isScheduled})...`);
 
-      // Add minimum display time for notification (2 seconds)
-      const [result] = await Promise.all([
-        autoMoodService.autoDetectMood(),
-        new Promise(resolve => setTimeout(resolve, 2000))
-      ]);
+      try {
+        // Add minimum display time for notification (3 seconds)
+        const [result] = await Promise.all([
+          autoMoodService.autoDetectMood(),
+          new Promise(resolve => setTimeout(resolve, 3000))
+        ]);
 
-      setIsDetecting(false);
+        console.log('📊 Detection result:', result);
+        setIsDetecting(false);
 
-      if (result.success && result.mood) {
-        setDetectedMood(result.mood);
-        console.log(`✅ Auto-detected mood: ${result.mood} (confidence: ${result.confidence})`);
-        console.log('🔔 Updating notification with detected mood');
-        
-        // Note: Backend automatically stores mood analysis when user is authenticated
-        // The detection API call includes auth token and stores results server-side
-        console.log('📝 Mood auto-stored by backend if authenticated');
-        
-        // Dispatch custom event to notify other components
-        window.dispatchEvent(new CustomEvent('moodUpdated', { detail: { mood: result.mood } }));
-      } else {
-        // Fallback to happy
-        setDetectedMood('happy');
-        console.log('⚠️ Auto detection failed, using default mood: happy');
-        
-        // Still dispatch event for fallback mood
-        window.dispatchEvent(new CustomEvent('moodUpdated', { detail: { mood: 'happy' } }));
-      }
-
-      // Hide notification after 8 seconds (give user time to see it)
-      setTimeout(() => {
-        console.log('🔕 Hiding auto mood detection notification');
-        setShowNotification(false);
-      }, 8000);
-    };
-
-    // Initial detection on page load (with delay)
-    const initialTimer = setTimeout(async () => {
-      console.log('🎯 Initial page load - checking if auto mood detection should run...');
-      
-      // Check authentication first
-      const authed = await checkAuth();
-      if (!authed) {
-        console.log('🚫 Not authenticated, skipping initial auto mood detection');
-        return;
-      }
-      
-      // For initial page load, check if we have recent mood data
-      const storedMood = localStorage.getItem('detected_mood');
-      if (storedMood) {
-        try {
-          // Try to parse as JSON object first
-          let moodData;
-          try {
-            moodData = JSON.parse(storedMood);
-          } catch {
-            // If parsing fails, it's an old string format - clear it
-            console.log('🧹 Clearing old mood format from localStorage');
-            localStorage.removeItem('detected_mood');
-            moodData = null;
+        if (result.success && result.mood) {
+          setDetectedMood(result.mood);
+          
+          console.log(`✅ Auto-detected mood: ${result.mood} (confidence: ${result.confidence})`);
+          console.log('🔔 Updating notification with detected mood');
+          
+          // Note: Backend automatically stores mood analysis when user is authenticated
+          console.log('📝 Mood auto-stored by backend if authenticated');
+          
+          // Dispatch custom event to notify other components
+          window.dispatchEvent(new CustomEvent('moodUpdated', { detail: { mood: result.mood } }));
+          
+          // Hide notification after 8 seconds
+          setTimeout(() => {
+            console.log('🔕 Hiding auto mood detection notification');
+            setShowNotification(false);
+          }, 8000);
+        } else {
+          // Detection failed
+          console.error('❌ Auto mood detection failed');
+          console.error('Detection result:', result);
+          console.log('💡 Possible reasons:');
+          console.log('  - Camera/Microphone permission denied');
+          console.log('  - Camera/Microphone not available or in use by another app');
+          console.log('  - Browser doesn\'t support media devices');
+          console.log('  - Video/audio recording failed');
+          console.log('💡 To fix: Allow camera/microphone permissions in your browser settings');
+          
+          if (result.error) {
+            console.error('Error message:', result.error);
           }
           
-          if (moodData && moodData.timestamp) {
-            const moodTimestamp = new Date(moodData.timestamp).getTime();
-            const age = Date.now() - moodTimestamp;
-            
-            // If mood is less than 15 minutes old, skip detection
-            if (age < 29 * 60 * 1000) {
-              console.log('✅ Fresh mood data exists (', Math.floor(age / 60000), 'min old), skipping initial detection');
-              return;
-            } else {
-              console.log('⏰ Mood data is stale (', Math.floor(age / 60000), 'min old), running detection');
-            }
-          }
-        } catch (error) {
-          console.error('Failed to parse stored mood:', error);
-          localStorage.removeItem('detected_mood'); // Clear corrupted data
+          setDetectedMood('error');
+          
+          // Show error notification for 8 seconds
+          setTimeout(() => {
+            console.log('🔕 Hiding error notification');
+            setShowNotification(false);
+          }, 8000);
         }
-      } else {
-        console.log('📭 No mood data found, running initial detection');
+      } catch (error) {
+        console.error('❌ Detection error:', error);
+        setIsDetecting(false);
+        setDetectedMood('error');
+        setShowNotification(false);
+      } finally {
+        // Ensure global flag is always reset
+        globalIsRunning = false;
       }
-      
-      // Run detection (scheduled=true to bypass cooldown)
-      runAutoDetection(true);
-    }, 3000);
+    };
+
+    // SINGLE detection trigger on component mount (only if timer doesn't exist)
+    if (!globalInitialTimer) {
+      globalInitialTimer = setTimeout(async () => {
+        console.log('🎯 Component mounted - checking if auto mood detection should run...');
+        
+        // Check authentication first
+        const authed = await checkAuth();
+        if (!authed) {
+          console.log('🚫 Not authenticated, skipping auto mood detection');
+          globalInitialTimer = null;
+          return;
+        }
+        
+        // Check if we have recent mood data (less than 15 minutes old)
+        const storedMood = localStorage.getItem('detected_mood');
+        if (storedMood) {
+          try {
+            const moodData = JSON.parse(storedMood);
+            if (moodData && moodData.timestamp) {
+              const moodTimestamp = new Date(moodData.timestamp).getTime();
+              const age = Date.now() - moodTimestamp;
+              
+              if (age < 15 * 60 * 1000) {
+                console.log('✅ Fresh mood data exists (', Math.floor(age / 60000), 'min old), skipping detection');
+                globalInitialTimer = null;
+                return;
+              } else {
+                console.log('⏰ Mood data is stale (', Math.floor(age / 60000), 'min old), running detection');
+              }
+            }
+          } catch (error) {
+            console.error('Failed to parse stored mood:', error);
+            localStorage.removeItem('detected_mood');
+          }
+        } else {
+          console.log('📭 No mood data found, running initial detection');
+        }
+        
+        // Run detection (scheduled=true to bypass cooldown)
+        runAutoDetection(true);
+        
+        // Clear global timer reference after execution
+        globalInitialTimer = null;
+      }, 3000); // 3 second delay after page load
+    } else {
+      console.log('⏸️ Initial timer already set, skipping duplicate');
+    }
     
-    // Set up automatic mood detection every 30 minutes
+    // Set up 30-minute interval for authenticated users
     checkAuth().then((authed) => {
       if (authed) {
         intervalId = setInterval(() => {
           console.log('⏰ 30-minute interval reached - running auto mood detection');
           runAutoDetection(true);
-        }, 30 * 60 * 1000); // Every 30 minutes
+        }, 30 * 60 * 1000);
       }
     });
 
-    // Listen for auth state changes (login/logout)
+    // Listen for auth state changes (for new logins/logouts only)
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event: string, session: any) => {
       const authed = !!session?.user;
       setIsAuthenticated(authed);
 
       if (event === 'SIGNED_IN' && authed) {
-        console.log('🔐 User signed in - triggering auto mood detection');
-        // Run detection after sign in (with small delay)
-        setTimeout(() => {
-          runAutoDetection(false);
-        }, 2000);
-
-        // Set up 30-minute interval if not already running
+        console.log('🔐 User just signed in (new login event)');
+        // Initial detection is handled by timer above, just set up interval
         if (!intervalId) {
           intervalId = setInterval(() => {
             console.log('⏰ 30-minute interval reached - running auto mood detection');
             runAutoDetection(true);
-          }, 30 * 60 * 1000); // Every 30 minutes
+          }, 30 * 60 * 1000);
         }
       } else if (event === 'SIGNED_OUT') {
         console.log('🔓 User signed out - stopping auto mood detection');
@@ -194,7 +225,10 @@ export function AutoMoodDetector() {
 
     // Cleanup
     return () => {
-      clearTimeout(initialTimer);
+      if (globalInitialTimer) {
+        clearTimeout(globalInitialTimer);
+        globalInitialTimer = null;
+      }
       if (intervalId) {
         clearInterval(intervalId);
       }
@@ -224,6 +258,21 @@ export function AutoMoodDetector() {
             <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden">
               <div className="bg-primary h-full animate-pulse" style={{ width: '70%' }} />
             </div>
+          </>
+        ) : detectedMood === 'error' ? (
+          <>
+            <div className="flex items-center space-x-3 mb-2">
+              <div className="text-5xl">⚠️</div>
+              <div>
+                <h2 className="text-xl font-bold text-destructive">
+                  Detection Failed
+                </h2>
+                <p className="text-xs text-muted-foreground">Camera/Mic access needed</p>
+              </div>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Please allow camera and microphone access in your browser settings to use auto mood detection.
+            </p>
           </>
         ) : (
           <>

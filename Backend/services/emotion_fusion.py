@@ -60,7 +60,6 @@ class EmotionFusionService:
         self.voice_weight /= total
         self.face_weight /= total
         
-        logger.info(f"Emotion Fusion initialized (voice: {self.voice_weight:.2f}, face: {self.face_weight:.2f})")
     
     def normalize_emotion(self, emotion: str) -> str:
         """Normalize emotion name to lowercase"""
@@ -204,7 +203,6 @@ class EmotionFusionService:
         # If agreement is weak or conflict, consider using a neutral fallback
         agreement = merged_result["agreement"]
         if agreement == "conflict" and merged_result["final_confidence"] < 0.4:
-            logger.info("Low confidence with conflicting predictions, using neutral")
             return "neutral"
         
         return final_emotion

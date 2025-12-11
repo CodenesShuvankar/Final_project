@@ -26,7 +26,7 @@ export default function MainLayout({
 
   useEffect(() => {
     // Public routes that don't require authentication
-    const publicRoutes = ['/', '/search'];
+    const publicRoutes = ['/home', '/search'];
     const isPublicRoute = publicRoutes.includes(pathname);
 
     // Check authentication on mount
@@ -74,7 +74,7 @@ export default function MainLayout({
   }, [router, pathname]);
 
   // Public routes that don't require authentication
-  const publicRoutes = ['/', '/search'];
+  const publicRoutes = ['/', '/home', '/search'];
   const isPublicRoute = publicRoutes.includes(pathname);
 
   // Show loading while checking auth (except for public routes)

@@ -84,32 +84,16 @@ export function SongCard({
     };
   }, [track.id]);
 
-  const handlePlay = async (e?: React.MouseEvent) => {
-    e?.preventDefault();
-    e?.stopPropagation();
-    
-    console.log('🎵 Play button clicked for:', track.title);
-    console.log('🔗 Spotify URL:', track.spotifyUrl);
-    console.log('🎯 Has onPlay callback:', !!onPlay);
-    
+  const handlePlay = async () => {
     if (onPlay) {
       onPlay();
-    } else if (track.spotifyUrl) {
-      // Open Spotify URL directly if available
-      console.log('🌐 Opening Spotify URL:', track.spotifyUrl);
-      const newWindow = window.open(track.spotifyUrl, '_blank', 'noopener,noreferrer');
-      if (!newWindow) {
-        console.error('❌ Failed to open new window - popup might be blocked');
-        alert('Please allow popups to play songs on Spotify');
-      }
     } else {
       // Use player service to play track
-      console.log('🎮 Using player service');
       playerService.playTrack(track);
     }
     
-    // Track in listening history (only if we have onPlay or spotifyUrl)
-    if (isAuthenticated && (onPlay || track.spotifyUrl)) {
+    // Track in listening history
+    if (isAuthenticated) {
       try {
         await HistoryService.addToHistory(
           track.id,
@@ -117,14 +101,10 @@ export function SongCard({
           track.artist,
           track.album,
           track.coverUrl,
-          track.spotifyUrl,
+          undefined, // spotify_url
           track.duration ? track.duration * 1000 : undefined,
           false // not completed yet
         );
-        console.log('✅ Added to history:', track.title);
-        
-        // Dispatch event to notify main page to refresh recently played
-        window.dispatchEvent(new CustomEvent('historyUpdated'));
       } catch (error) {
         console.error('Failed to track listening history:', error);
       }
@@ -219,7 +199,7 @@ export function SongCard({
               variant="ghost"
               size="icon"
               className="h-6 w-6 text-white hover:bg-white/20"
-              onClick={(e) => handlePlay(e)}
+              onClick={handlePlay}
             >
               {isCurrentTrack && isPlaying ? (
                 <Pause className="h-3 w-3" />
@@ -357,7 +337,7 @@ export function SongCard({
               variant="ghost"
               size="icon"
               className="h-12 w-12 bg-primary text-primary-foreground hover:bg-primary/90 rounded-full"
-              onClick={(e) => handlePlay(e)}
+              onClick={handlePlay}
             >
               {isCurrentTrack && isPlaying ? (
                 <Pause className="h-6 w-6" />
