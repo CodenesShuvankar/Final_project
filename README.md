@@ -2,7 +2,7 @@
 
 [![Next.js](https://img.shields.io/badge/Next.js-14-black?logo=next.js)](https://nextjs.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green?logo=fastapi)](https://fastapi.tiangolo.com/)
-[![Python](https://img.shields.io/badge/Python-3.9+-blue?logo=python)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.12.9-blue?logo=python)](https://www.python.org/)
 [![Supabase](https://img.shields.io/badge/Supabase-Database-green?logo=supabase)](https://supabase.com/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-blue?logo=typescript)](https://www.typescriptlang.org/)
 
@@ -168,17 +168,20 @@ cd Backend
 
 # Create and activate a Python virtual environment
 python -m venv venv
-.\venv\Scripts\Activate.ps1
+
+#activate a Python virtual environment
+venv\Scripts\Activate.ps1
 
 # Install the required dependencies
 pip install -r requirements.txt
 
-# Create the environment file from the example
-# In PowerShell:
-copy .env.example .env
+#for prisma generation
+prisma generate
 
-# In Git Bash or other terminals:
-# cp .env.example .env
+# Create the environment file from the example
+paste the .env file to Backend/
+
+
 
 # Edit the .env file with your credentials from Supabase and RapidAPI
 # SUPABASE_URL=https://your-project-id.supabase.co
@@ -196,18 +199,17 @@ The backend will be running at `http://localhost:8000`. You can access the API d
 ### 3. Frontend Setup
 
 ```powershell
+#open another powershell or terminal in vs code
+
 # Navigate to the Frontend directory from the root
 cd Frontend
 
 # Install the required dependencies
 npm install
 
-# Create the local environment file from the example
-# In PowerShell:
-copy .env.example .env.local
+#paste the .env.local file to the Frontend/
+.env.local
 
-# In Git Bash or other terminals:
-# cp .env.example .env.local
 
 # Edit the .env.local file with your Supabase credentials
 # NEXT_PUBLIC_SUPABASE_URL=https://your-project-id.supabase.co
