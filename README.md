@@ -166,6 +166,12 @@ cd VibeTune
 # Navigate to the Backend directory
 cd Backend
 
+#Download paste this model to Backend\voice_model\final_voice_model
+https://drive.google.com/drive/folders/1qDL5Arjf2JCxPJ6_73uU_5rOBU9QSzZP?usp=drive_link
+#Download and paste this model to Backend\voice_model
+https://huggingface.co/SumitPaul/neurosync-multimodal-fusion/blob/main/last_checkpoint.pth
+
+
 # Create and activate a Python virtual environment
 python -m venv venv
 
