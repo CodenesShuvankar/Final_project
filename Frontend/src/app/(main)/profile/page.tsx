@@ -4,7 +4,7 @@ import * as React from 'react';
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { User, Calendar, Music, LogOut, Plus, Trash2, History, TrendingUp, BarChart3, Loader2 } from 'lucide-react';
+import { User, Calendar, Music, LogOut, Plus, Trash2, History, TrendingUp, BarChart3, Loader2, Compass } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -27,10 +27,29 @@ const EMOTION_VALENCE: Record<string, number> = {
   disgust: -0.6
 };
 
+const EMOTION_AROUSAL: Record<string, number> = {
+  happy: 0.7,
+  surprise: 0.8,
+  neutral: 0.0,
+  sad: -0.4,
+  angry: 0.8,
+  fear: 0.9,
+  disgust: 0.5
+};
+
 // Valence thresholds for classification
 const VALENCE_THRESHOLDS = {
   positive: 0.3,  // >= 0.3 is Positive
   negative: -0.3  // <= -0.3 is Negative
+};
+
+const parseScore = (value: unknown): number | null => {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  const parsed = parseFloat(String(value));
+  return Number.isNaN(parsed) ? null : parsed;
 };
 
 /**
@@ -92,6 +111,33 @@ export default function ProfilePage() {
     'Punk': ['disgust']
   };
 
+  const matchesActiveFilter = (entry: { detected_mood?: string; dateStr?: string; valence?: number }) => {
+    if (!dashboardFilter.type) return true;
+    const mood = (entry.detected_mood || '').toLowerCase();
+    switch (dashboardFilter.type) {
+      case 'emotion':
+        return dashboardFilter.value ? mood === dashboardFilter.value.toLowerCase() : true;
+      case 'date':
+        return dashboardFilter.value ? entry.dateStr === dashboardFilter.value : true;
+      case 'genre':
+        if (!dashboardFilter.value) return true;
+        const allowed = genreToMoods[dashboardFilter.value] || [];
+        return allowed.includes(mood);
+      case 'valenceCategory': {
+        if (!dashboardFilter.value) return true;
+        const valence = typeof entry.valence === 'number' ? entry.valence : 0;
+        if (dashboardFilter.value === 'Positive') return valence >= VALENCE_THRESHOLDS.positive;
+        if (dashboardFilter.value === 'Negative') return valence <= VALENCE_THRESHOLDS.negative;
+        if (dashboardFilter.value === 'Neutral') {
+          return valence > VALENCE_THRESHOLDS.negative && valence < VALENCE_THRESHOLDS.positive;
+        }
+        return true;
+      }
+      default:
+        return true;
+    }
+  };
+
   // ============================================
   // CENTRALIZED DASHBOARD DATA (computed once)
   // ============================================
@@ -123,11 +169,19 @@ export default function ProfilePage() {
     }
 
     // 1. Add valence to each mood entry
-    const moodWithValence = moodHistory.map(m => ({
-      ...m,
-      valence: EMOTION_VALENCE[m.detected_mood.toLowerCase()] ?? 0,
-      dateStr: new Date(m.created_at).toISOString().split('T')[0]
-    }));
+    const moodWithValence = moodHistory.map(m => {
+      const moodKey = (m.detected_mood || '').toLowerCase();
+      const valenceFromDb = parseScore((m as any).valence_score);
+      const arousalFromDb = parseScore((m as any).arousal_score);
+      const valence = valenceFromDb ?? (EMOTION_VALENCE[moodKey] ?? 0);
+      const arousal = arousalFromDb ?? (EMOTION_AROUSAL[moodKey] ?? 0);
+      return {
+        ...m,
+        valence,
+        arousal,
+        dateStr: new Date(m.created_at).toISOString().split('T')[0]
+      };
+    });
 
     // 2. Apply filters to get filtered moods
     let filteredMoods = [...moodWithValence];
@@ -884,155 +938,166 @@ export default function ProfilePage() {
                   </CardContent>
                 </Card>
 
-                {/* Card 2: Valence Trend Over Time */}
+                {/* Card 2: Mood Compass */}
                 <Card>
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
-                      <TrendingUp className="h-5 w-5" />
-                      Valence Trend Over Time
+                      <Compass className="h-5 w-5" />
+                      Mood Compass
                     </CardTitle>
-                    <CardDescription>Click points to filter by valence category</CardDescription>
+                    <CardDescription>Valence and Arousal Model </CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <div className="space-y-4">
-                      <div className="relative h-72 bg-muted/20 rounded-lg p-4">
-                        {(() => {
-                          // Get last 20 mood entries with valence (most recent first, so reverse for timeline)
-                          const recentMoods = [...dashboardData.moodWithValence].slice(0, 20).reverse();
-                          if (recentMoods.length === 0) return null;
+                    {(() => {
+                      const clampScore = (value: number) => Math.max(-1, Math.min(1, value));
+                      const rawPoints = dashboardData.moodWithValence
+                        .filter((m: any) => typeof m.valence === 'number' && typeof m.arousal === 'number')
+                        .slice(0, 40);
 
-                          // Calculate valence for each mood and map to chart coordinates
-                          const points = recentMoods.map((m: any, index: number) => {
-                            const x = (index / Math.max(recentMoods.length - 1, 1)) * 100;
-                            // Map valence (-1 to +1) to Y coordinate (100 to 0)
-                            const y = 50 - (m.valence * 50);
-                            // Determine valence category
-                            const category = m.valence >= VALENCE_THRESHOLDS.positive ? 'Positive' : 
-                                           m.valence <= VALENCE_THRESHOLDS.negative ? 'Negative' : 'Neutral';
-                            return { x, y, valence: m.valence, mood: m.detected_mood, date: m.created_at, dateStr: m.dateStr, category };
-                          });
+                      if (rawPoints.length === 0) {
+                        return (
+                          <div className="p-6 text-center text-sm text-muted-foreground bg-muted/30 rounded-lg">
+                            Run a few mood detections to unlock your valence–arousal map.
+                          </div>
+                        );
+                      }
 
-                          // Create SVG path with smooth curves
-                          const pathData = points.map((p, i) => 
-                            `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`
-                          ).join(' ');
+                      type QuadrantKey = 'HAPV' | 'LAPV' | 'HANV' | 'LANV';
+                      const annotated = rawPoints.map((m: any, idx: number) => {
+                        const valence = clampScore(m.valence);
+                        const arousal = clampScore(m.arousal);
+                        const quadrant: QuadrantKey = valence >= 0 && arousal >= 0 ? 'HAPV'
+                          : valence >= 0 && arousal < 0 ? 'LAPV'
+                          : valence < 0 && arousal >= 0 ? 'HANV'
+                          : 'LANV';
+                        const category = valence >= VALENCE_THRESHOLDS.positive ? 'Positive'
+                          : valence <= VALENCE_THRESHOLDS.negative ? 'Negative'
+                          : 'Neutral';
+                        return {
+                          ...m,
+                          valence,
+                          arousal,
+                          quadrant,
+                          category,
+                          x: 60 + valence * 38,
+                          y: 60 - arousal * 38,
+                          isLatest: idx === 0,
+                        };
+                      });
 
-                          return (
-                            <div className="relative w-full h-full">
-                              {/* Y-axis labels */}
-                              <div className="absolute left-0 top-0 bottom-6 flex flex-col justify-between text-xs text-muted-foreground/80 pr-2 w-16">
-                                <span className="text-right">+1.0</span>
-                                <span className="text-right">0.0</span>
-                                <span className="text-right">-1.0</span>
-                              </div>
+                      const quadrantMeta: Record<QuadrantKey, { label: string; detail: string; description: string }> = {
+                        HAPV: { label: 'HAPV', detail: 'Excited · Happy', description: 'High arousal • Positive valence' },
+                        LAPV: { label: 'LAPV', detail: 'Calm · Relaxed', description: 'Low arousal • Positive valence' },
+                        HANV: { label: 'HANV', detail: 'Anxious · Angry', description: 'High arousal • Negative valence' },
+                        LANV: { label: 'LANV', detail: 'Sad · Tired', description: 'Low arousal • Negative valence' },
+                      };
 
-                              {/* Chart area */}
-                              <div className="absolute left-16 right-0 top-0 bottom-6">
-                                <svg viewBox="0 0 100 100" className="w-full h-full overflow-visible">
-                                  <defs>
-                                    {/* Gradients */}
-                                    <linearGradient id="lineGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                                      <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity="0.8" />
-                                      <stop offset="50%" stopColor="hsl(var(--primary))" stopOpacity="0.6" />
-                                      <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity="0.8" />
-                                    </linearGradient>
-                                  </defs>
+                      const colors: Record<QuadrantKey, string> = {
+                        HAPV: '#22c55e',
+                        LAPV: '#0ea5e9',
+                        HANV: '#f97316',
+                        LANV: '#6366f1',
+                      };
 
-                                  {/* Grid lines - subtle */}
-                                  <line x1="0" y1="0" x2="100" y2="0" stroke="currentColor" strokeWidth="0.15" className="text-border" />
-                                  <line x1="0" y1="50" x2="100" y2="50" stroke="currentColor" strokeWidth="0.25" className="text-border" strokeDasharray="3,3" />
-                                  <line x1="0" y1="100" x2="100" y2="100" stroke="currentColor" strokeWidth="0.15" className="text-border" />
+                      const latest = annotated[0];
 
-                                  {/* Main line */}
-                                  <path
-                                    d={pathData}
-                                    fill="none"
-                                    stroke="url(#lineGradient)"
-                                    strokeWidth="2"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                  />
+                      return (
+                        <div className="space-y-4">
+                          <div className="relative h-80">
+                            <svg viewBox="0 0 120 120" className="w-full h-full">
+                              <defs>
+                                <radialGradient id="compassGlow" cx="50%" cy="50%" r="50%">
+                                  <stop offset="0%" stopColor="rgba(255,255,255,0.18)" />
+                                  <stop offset="100%" stopColor="rgba(15,23,42,0.08)" />
+                                </radialGradient>
+                              </defs>
+                              <circle cx="60" cy="60" r="48" fill="url(#compassGlow)" stroke="rgba(148,163,184,0.4)" strokeWidth="0.6" />
+                              <line x1="12" x2="108" y1="60" y2="60" stroke="rgba(148,163,184,0.65)" strokeWidth="0.7" />
+                              <line x1="60" x2="60" y1="12" y2="108" stroke="rgba(148,163,184,0.65)" strokeWidth="0.7" />
+                              <line x1="12" x2="108" y1="30" y2="30" stroke="rgba(148,163,184,0.25)" strokeDasharray="3,3" strokeWidth="0.4" />
+                              <line x1="12" x2="108" y1="90" y2="90" stroke="rgba(148,163,184,0.25)" strokeDasharray="3,3" strokeWidth="0.4" />
+                              <line x1="30" x2="30" y1="12" y2="108" stroke="rgba(148,163,184,0.25)" strokeDasharray="3,3" strokeWidth="0.4" />
+                              <line x1="90" x2="90" y1="12" y2="108" stroke="rgba(148,163,184,0.25)" strokeDasharray="3,3" strokeWidth="0.4" />
+                              <text x="95" y="64" fontSize="4" fill="rgba(148,163,184,0.9)">Valence →</text>
+                              <text x="63" y="18" fontSize="4" fill="rgba(148,163,184,0.9)">High arousal</text>
+                              <text x="63" y="106" fontSize="4" fill="rgba(148,163,184,0.9)">Low arousal</text>
 
-                                  {/* Data points */}
-                                  {points.map((p, i) => {
-                                    const pointColor = p.valence >= VALENCE_THRESHOLDS.positive ? '#22c55e' : 
-                                                      p.valence <= VALENCE_THRESHOLDS.negative ? '#ef4444' : 
-                                                      '#94a3b8';
-                                    
-                                    // Check if this point's category is selected or should be dimmed
-                                    const isSelected = isFilterActive('valenceCategory', p.category);
-                                    const isDimmed = dashboardFilter.type && !isSelected && 
-                                      !(dashboardFilter.type === 'valenceCategory' && !dashboardFilter.value);
-                                    
-                                    return (
-                                      <g key={i} className="cursor-pointer" onClick={() => toggleFilter('valenceCategory', p.category)}>
-                                        {/* Outer glow circle */}
-                                        <circle
-                                          cx={p.x}
-                                          cy={p.y}
-                                          r={isSelected ? "3.5" : "2.5"}
-                                          fill={pointColor}
-                                          opacity={isDimmed ? "0.1" : "0.3"}
-                                        />
-                                        {/* Main point */}
-                                        <circle
-                                          cx={p.x}
-                                          cy={p.y}
-                                          r={isSelected ? "2.5" : "1.8"}
-                                          fill={pointColor}
-                                          className={`transition-all ${isDimmed ? 'opacity-20' : ''}`}
-                                          stroke={isSelected ? "white" : "none"}
-                                          strokeWidth={isSelected ? "0.5" : "0"}
-                                        />
-                                        {/* Hover hitbox - larger invisible circle for easier clicking */}
-                                        <circle
-                                          cx={p.x}
-                                          cy={p.y}
-                                          r="5"
-                                          fill="transparent"
-                                          className="cursor-pointer"
-                                        />
-                                      </g>
-                                    );
-                                  })}
-                                </svg>
+                              {annotated.slice().reverse().map((point, i) => {
+                                const pointColor = colors[point.quadrant as QuadrantKey];
+                                const matchesFilter = matchesActiveFilter({
+                                  detected_mood: point.detected_mood,
+                                  dateStr: point.dateStr,
+                                  valence: point.valence,
+                                });
+                                const isDimmed = dashboardFilter.type ? !matchesFilter : false;
+                                const isSelected = dashboardFilter.type === 'valenceCategory' && dashboardFilter.value === point.category;
+                                return (
+                                  <g key={`${point.created_at}-${i}`} className="cursor-pointer" onClick={() => toggleFilter('valenceCategory', point.category)}>
+                                    <circle
+                                      cx={point.x}
+                                      cy={point.y}
+                                      r={point.isLatest ? 3.5 : 2.6}
+                                      fill={pointColor}
+                                      opacity={isDimmed ? 0.1 : 0.18}
+                                    />
+                                    <circle
+                                      cx={point.x}
+                                      cy={point.y}
+                                      r={point.isLatest ? 2.4 : 1.7}
+                                      fill={pointColor}
+                                      className={`transition-opacity ${isDimmed ? 'opacity-30' : 'opacity-100'}`}
+                                      stroke={point.isLatest ? 'white' : 'transparent'}
+                                      strokeWidth={point.isLatest ? 0.5 : 0}
+                                    />
+                                    <circle cx={point.x} cy={point.y} r={5} fill="transparent" />
+                                    <title>
+                                      {`${point.detected_mood} · v ${point.valence.toFixed(2)} / a ${point.arousal.toFixed(2)} (${new Date(point.created_at).toLocaleString()})`}
+                                    </title>
+                                  </g>
+                                );
+                              })}
+                            </svg>
+                          </div>
 
-                                {/* X-axis labels */}
-                                <div className="absolute -bottom-5 left-0 right-0 flex justify-between text-xs text-muted-foreground/80">
-                                  <span>Oldest</span>
-                                  <span>Recent</span>
+                          <div className="grid gap-2 sm:grid-cols-2 text-xs">
+                            {Object.entries(quadrantMeta).map(([key, meta]) => (
+                              <div key={key} className="flex items-start gap-2 rounded-lg border border-border/40 p-3 bg-muted/20">
+                                <div
+                                  className="w-2 h-2 rounded-full mt-1"
+                                  style={{ backgroundColor: colors[key as QuadrantKey] }}
+                                />
+                                <div>
+                                  <p className="text-sm font-semibold text-foreground">{meta.label} · {meta.detail}</p>
+                                  <p className="text-[11px] text-muted-foreground">{meta.description}</p>
                                 </div>
                               </div>
-                            </div>
-                          );
-                        })()}
-                      </div>
+                            ))}
+                          </div>
 
-                      {/* Legend */}
-                      <div className="flex items-center justify-center gap-4 text-xs">
-                        <div 
-                          className={`flex items-center gap-1.5 cursor-pointer p-1.5 rounded-md transition-all ${isFilterActive('valenceCategory', 'Positive') ? 'bg-green-500/20 ring-1 ring-green-500/50' : 'hover:bg-muted/50'} ${dashboardFilter.type && !isFilterActive('valenceCategory', 'Positive') ? 'opacity-40' : ''}`}
-                          onClick={() => toggleFilter('valenceCategory', 'Positive')}
-                        >
-                          <div className="w-2.5 h-2.5 rounded-full bg-green-500"></div>
-                          <span className="text-muted-foreground">Positive</span>
+                          <div className="flex flex-wrap gap-2 text-xs justify-center sm:justify-start">
+                            {[
+                              { label: 'Positive', color: 'bg-green-500' },
+                              { label: 'Neutral', color: 'bg-slate-400' },
+                              { label: 'Negative', color: 'bg-red-500' },
+                            ].map((chip) => {
+                              const active = isFilterActive('valenceCategory', chip.label);
+                              const dimmed = dashboardFilter.type && !active && dashboardFilter.type === 'valenceCategory';
+                              return (
+                                <button
+                                  key={chip.label}
+                                  type="button"
+                                  onClick={() => toggleFilter('valenceCategory', chip.label)}
+                                  className={`flex items-center gap-1.5 px-2 py-1 rounded-full border text-foreground/80 transition ${active ? 'border-primary bg-primary/10' : 'border-border/50 hover:bg-muted/40'} ${dimmed ? 'opacity-40' : ''}`}
+                                >
+                                  <span className={`w-2 h-2 rounded-full ${chip.color}`}></span>
+                                  {chip.label}
+                                </button>
+                              );
+                            })}
+                          </div>
                         </div>
-                        <div 
-                          className={`flex items-center gap-1.5 cursor-pointer p-1.5 rounded-md transition-all ${isFilterActive('valenceCategory', 'Neutral') ? 'bg-slate-400/20 ring-1 ring-slate-400/50' : 'hover:bg-muted/50'} ${dashboardFilter.type && !isFilterActive('valenceCategory', 'Neutral') ? 'opacity-40' : ''}`}
-                          onClick={() => toggleFilter('valenceCategory', 'Neutral')}
-                        >
-                          <div className="w-2.5 h-2.5 rounded-full bg-slate-400"></div>
-                          <span className="text-muted-foreground">Neutral</span>
-                        </div>
-                        <div 
-                          className={`flex items-center gap-1.5 cursor-pointer p-1.5 rounded-md transition-all ${isFilterActive('valenceCategory', 'Negative') ? 'bg-red-500/20 ring-1 ring-red-500/50' : 'hover:bg-muted/50'} ${dashboardFilter.type && !isFilterActive('valenceCategory', 'Negative') ? 'opacity-40' : ''}`}
-                          onClick={() => toggleFilter('valenceCategory', 'Negative')}
-                        >
-                          <div className="w-2.5 h-2.5 rounded-full bg-red-500"></div>
-                          <span className="text-muted-foreground">Negative</span>
-                        </div>
-                      </div>
-                    </div>
+                      );
+                    })()}
                   </CardContent>
                 </Card>
 

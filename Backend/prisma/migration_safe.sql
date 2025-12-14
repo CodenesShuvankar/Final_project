@@ -90,6 +90,8 @@ CREATE TABLE IF NOT EXISTS public.mood_analysis (
     face_confidence DOUBLE PRECISION,
     agreement TEXT,
     analysis_type TEXT NOT NULL,
+    valence_score TEXT,
+    arousal_score TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 

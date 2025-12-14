@@ -21,8 +21,17 @@ class StoreMoodAnalysisRequest(BaseModel):
     voice_confidence: Optional[float] = None
     face_emotion: Optional[str] = None
     face_confidence: Optional[float] = None
+    valence_score: Optional[float] = None
+    arousal_score: Optional[float] = None
     agreement: Optional[str] = None
     analysis_type: str  # "voice", "face", or "multimodal"
+
+
+def _safe_float(value: Optional[str]) -> Optional[float]:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
 async def store_mood_analysis(
@@ -41,7 +50,9 @@ async def store_mood_analysis(
                 "face_emotion": request.face_emotion,
                 "face_confidence": request.face_confidence,
                 "agreement": request.agreement,
-                "analysis_type": request.analysis_type
+                "analysis_type": request.analysis_type,
+                "valence_score": str(request.valence_score) if request.valence_score is not None else None,
+                "arousal_score": str(request.arousal_score) if request.arousal_score is not None else None,
             }
         )
         
@@ -54,6 +65,8 @@ async def store_mood_analysis(
                 "detected_mood": analysis.detected_mood,
                 "confidence": analysis.confidence,
                 "analysis_type": analysis.analysis_type,
+                "valence_score": _safe_float(analysis.valence_score),
+                "arousal_score": _safe_float(analysis.arousal_score),
                 "created_at": analysis.created_at.isoformat()
             }
         }
@@ -98,6 +111,8 @@ async def get_mood_history(
                     "face_confidence": a.face_confidence,
                     "agreement": a.agreement,
                     "analysis_type": a.analysis_type,
+                    "valence_score": _safe_float(a.valence_score),
+                    "arousal_score": _safe_float(a.arousal_score),
                     "created_at": a.created_at.isoformat()
                 }
                 for a in analyses
@@ -192,6 +207,8 @@ async def get_latest_mood(
                 "detected_mood": analysis.detected_mood,
                 "confidence": analysis.confidence,
                 "analysis_type": analysis.analysis_type,
+                "valence_score": _safe_float(analysis.valence_score),
+                "arousal_score": _safe_float(analysis.arousal_score),
                 "created_at": analysis.created_at.isoformat()
             }
         }

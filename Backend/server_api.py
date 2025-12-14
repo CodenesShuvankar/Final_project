@@ -11,6 +11,7 @@ import voice_model.voice_api as voice_api
 from services.spotify_service import SpotifyService
 from services.emotion_fusion import emotion_fusion
 from services.fusion_model import get_fusion_predictor
+from services.valence_arousal import compute_valence_arousal
 from routes import playlists_prisma as playlists
 from routes import history
 from routes import mood_analysis
@@ -52,6 +53,13 @@ app.add_middleware(
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def _format_score(value: Optional[float]) -> Optional[str]:
+    """Convert float scores to short strings for Prisma TEXT columns."""
+    if value is None:
+        return None
+    return f"{value:.4f}"
 
 # Model paths (local, absolute)
 model_path = Path(__file__).parent / "voice_model" / "final_voice_model"
@@ -202,7 +210,17 @@ async def analyze_voice(
         
         # Use the convenient wrapper function
         result = voice_api.analyze_audio_upload(audio_file, model_path, checkpoint_path=None)
-        
+
+        if result.get("success"):
+            prediction = result.get("prediction", {})
+            emotion = prediction.get("emotion", "unknown")
+            confidence = prediction.get("confidence", 0.0)
+            valence_score, arousal_score = compute_valence_arousal(emotion, confidence)
+            result["valence_score"] = valence_score
+            result["arousal_score"] = arousal_score
+        else:
+            valence_score = arousal_score = None
+
         # Store mood analysis in database if user is authenticated and analysis succeeded
         if user_id and result.get("success"):
             try:
@@ -210,7 +228,6 @@ async def analyze_voice(
                 prediction = result.get("prediction", {})
                 emotion = prediction.get("emotion", "unknown")
                 confidence = prediction.get("confidence", 0.0)
-                
                 await db.moodanalysis.create(
                     data={
                         "user_id": user_id,
@@ -219,6 +236,8 @@ async def analyze_voice(
                         "voice_emotion": emotion,
                         "voice_confidence": confidence,
                         "analysis_type": "voice",
+                        "valence_score": _format_score(valence_score),
+                        "arousal_score": _format_score(arousal_score),
                         "created_at": datetime.utcnow()
                     }
                 )
@@ -309,6 +328,28 @@ async def analyze_video_upload(
             if not voice_pred:
                 return {"success": False, "error": "No audio or video data extracted from upload"}
             # Voice-only fallback
+            valence_score, arousal_score = compute_valence_arousal(
+                voice_pred["emotion"], voice_pred["confidence"]
+            )
+            if user_id:
+                try:
+                    from datetime import datetime
+                    await db.moodanalysis.create(
+                        data={
+                            "user_id": user_id,
+                            "detected_mood": voice_pred["emotion"],
+                            "confidence": voice_pred["confidence"],
+                            "voice_emotion": voice_pred["emotion"],
+                            "voice_confidence": voice_pred["confidence"],
+                            "analysis_type": "voice",
+                            "valence_score": _format_score(valence_score),
+                            "arousal_score": _format_score(arousal_score),
+                            "created_at": datetime.utcnow()
+                        }
+                    )
+                    logger.info("📝 Stored voice-only fallback analysis for video upload")
+                except Exception as db_error:
+                    logger.error(f"❌ Failed to store voice-only fallback: {db_error}")
             return {
                 "success": True,
                 "mode": "voice-only",
@@ -316,7 +357,9 @@ async def analyze_video_upload(
                     "merged_emotion": voice_pred["emotion"],
                     "merged_confidence": voice_pred["confidence"],
                     "voice_prediction": voice_pred,
-                    "note": "No video frames; voice-only result"
+                    "note": "No video frames; voice-only result",
+                    "valence_score": valence_score,
+                    "arousal_score": arousal_score,
                 },
                 "recommendation_emotion": voice_pred["emotion"],
                 "recommendations": spotify_service.get_mood_recommendations(voice_pred["emotion"], limit),
@@ -338,6 +381,28 @@ async def analyze_video_upload(
 
         # If no voice, use face-only
         if not voice_pred:
+            valence_score, arousal_score = compute_valence_arousal(
+                face_result["emotion"], face_result["confidence"]
+            )
+            if user_id:
+                try:
+                    from datetime import datetime
+                    await db.moodanalysis.create(
+                        data={
+                            "user_id": user_id,
+                            "detected_mood": face_result["emotion"],
+                            "confidence": face_result["confidence"],
+                            "face_emotion": face_result["emotion"],
+                            "face_confidence": face_result["confidence"],
+                            "analysis_type": "face",
+                            "valence_score": _format_score(valence_score),
+                            "arousal_score": _format_score(arousal_score),
+                            "created_at": datetime.utcnow()
+                        }
+                    )
+                    logger.info("📝 Stored face-only fallback analysis for video upload")
+                except Exception as db_error:
+                    logger.error(f"❌ Failed to store face-only fallback: {db_error}")
             return {
                 "success": True,
                 "mode": "face-only",
@@ -345,7 +410,9 @@ async def analyze_video_upload(
                     "merged_emotion": face_result["emotion"],
                     "merged_confidence": face_result["confidence"],
                     "face_prediction": face_result,
-                    "note": "No audio; face-only result"
+                    "note": "No audio; face-only result",
+                    "valence_score": valence_score,
+                    "arousal_score": arousal_score,
                 },
                 "recommendation_emotion": face_result["emotion"],
                 "recommendations": spotify_service.get_mood_recommendations(face_result["emotion"], limit),
@@ -389,6 +456,8 @@ async def analyze_video_upload(
             explanation = merged_result["explanation"]
             merged_probabilities = merged_result["merged_probabilities"]
 
+        valence_score, arousal_score = compute_valence_arousal(final_emotion, final_confidence)
+
         recommendations = spotify_service.get_mood_recommendations(recommendation_emotion, limit)
 
         if user_id:
@@ -405,6 +474,8 @@ async def analyze_video_upload(
                         "face_confidence": face_result["confidence"],
                         "agreement": agreement,
                         "analysis_type": "fusion" if use_fusion else "multimodal",
+                        "valence_score": _format_score(valence_score),
+                        "arousal_score": _format_score(arousal_score),
                         "created_at": datetime.utcnow()
                     }
                 )
@@ -422,6 +493,8 @@ async def analyze_video_upload(
             "face_prediction": face_result,
             "fusion_prediction": fusion_prediction,
             "merged_probabilities": merged_probabilities,
+            "valence_score": valence_score,
+            "arousal_score": arousal_score,
         }
         if not use_fusion:
             # Add rule-based merge details when not using fusion
@@ -622,6 +695,9 @@ async def analyze_voice_and_face(
             voice_pred = voice_result["prediction"]
             recommendation_emotion = voice_pred["emotion"]
             recommendations = spotify_service.get_mood_recommendations(recommendation_emotion, limit)
+            valence_score, arousal_score = compute_valence_arousal(
+                voice_pred["emotion"], voice_pred["confidence"]
+            )
 
             if user_id:
                 try:
@@ -634,6 +710,8 @@ async def analyze_voice_and_face(
                             "voice_emotion": voice_pred["emotion"],
                             "voice_confidence": voice_pred["confidence"],
                             "analysis_type": "voice",
+                            "valence_score": _format_score(valence_score),
+                            "arousal_score": _format_score(arousal_score),
                             "created_at": datetime.utcnow()
                         }
                     )
@@ -645,7 +723,9 @@ async def analyze_voice_and_face(
                 "mode": "voice-only",
                 "analysis": {
                     "voice_prediction": voice_pred,
-                    "note": "Face input missing or unusable; returning voice-only result"
+                    "note": "Face input missing or unusable; returning voice-only result",
+                    "valence_score": valence_score,
+                    "arousal_score": arousal_score,
                 },
                 "recommendation_emotion": recommendation_emotion,
                 "recommendations": recommendations,
@@ -656,6 +736,9 @@ async def analyze_voice_and_face(
         if has_face and not has_voice:
             recommendation_emotion = face_result["emotion"]
             recommendations = spotify_service.get_mood_recommendations(recommendation_emotion, limit)
+            valence_score, arousal_score = compute_valence_arousal(
+                face_result["emotion"], face_result["confidence"]
+            )
 
             if user_id:
                 try:
@@ -668,6 +751,8 @@ async def analyze_voice_and_face(
                             "face_emotion": face_result["emotion"],
                             "face_confidence": face_result["confidence"],
                             "analysis_type": "face",
+                            "valence_score": _format_score(valence_score),
+                            "arousal_score": _format_score(arousal_score),
                             "created_at": datetime.utcnow()
                         }
                     )
@@ -679,7 +764,9 @@ async def analyze_voice_and_face(
                 "mode": "face-only",
                 "analysis": {
                     "face_prediction": face_result,
-                    "note": "Audio input missing or unusable; returning face-only result"
+                    "note": "Audio input missing or unusable; returning face-only result",
+                    "valence_score": valence_score,
+                    "arousal_score": arousal_score,
                 },
                 "recommendation_emotion": recommendation_emotion,
                 "recommendations": recommendations,
@@ -773,6 +860,8 @@ async def analyze_voice_and_face(
 
         logger.info(f"🎵 Getting recommendations for: {recommendation_emotion_final}")
 
+        valence_score, arousal_score = compute_valence_arousal(final_emotion, final_confidence)
+
         try:
             recommendations = spotify_service.get_mood_recommendations(
                 recommendation_emotion_final, 
@@ -793,6 +882,8 @@ async def analyze_voice_and_face(
                             "face_confidence": face_result["confidence"],
                             "agreement": agreement,
                             "analysis_type": "fusion" if use_fusion else "multimodal",
+                            "valence_score": _format_score(valence_score),
+                            "arousal_score": _format_score(arousal_score),
                             "created_at": datetime.utcnow()
                         }
                     )
@@ -809,6 +900,8 @@ async def analyze_voice_and_face(
                 "explanation": explanation,
                 "summary": summary,
                 "merged_probabilities": merged_probabilities,
+                "valence_score": valence_score,
+                "arousal_score": arousal_score,
             }
             
             # Add rule-based merge details if not using fusion
@@ -846,6 +939,8 @@ async def analyze_voice_and_face(
                 "explanation": explanation,
                 "summary": summary,
                 "merged_probabilities": merged_probabilities,
+                "valence_score": valence_score,
+                "arousal_score": arousal_score,
             }
             
             if not use_fusion:

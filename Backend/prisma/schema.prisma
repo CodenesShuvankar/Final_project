@@ -127,6 +127,8 @@ model MoodAnalysis {
   face_confidence   Float?   @map("face_confidence")
   agreement         String?
   analysis_type     String   @map("analysis_type") // "voice", "face", "multimodal"
+  valence_score     String?  @map("valence_score")
+  arousal_score     String?  @map("arousal_score")
   created_at        DateTime @default(now()) @map("created_at")
   
   @@index([user_id])
