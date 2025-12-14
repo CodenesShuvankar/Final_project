@@ -148,6 +148,8 @@ model UserPreference {
   auto_mood_detection   Boolean  @default(false) @map("auto_mood_detection")
   explicit_content      Boolean  @default(true) @map("explicit_content")
   preferred_genres      String[] @map("preferred_genres")
+  language_priorities   String[] @map("language_priorities")
+  profile_photo_url     String?  @map("profile_photo_url")
   created_at            DateTime @default(now()) @map("created_at")
   updated_at            DateTime @updatedAt @map("updated_at")
   
