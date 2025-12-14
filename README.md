@@ -280,7 +280,7 @@ cd VibeTune
 cd Backend
 
 #Download paste this model to Backend\voice_model\final_voice_model
-https://drive.google.com/drive/folders/1qDL5Arjf2JCxPJ6_73uU_5rOBU9QSzZP?usp=drive_link
+https://huggingface.co/SumitPaul/speech-emotion-recognition-7class/tree/main/checkpoints/checkpoint-9380
 #Download and paste this model to Backend\video_model
 https://huggingface.co/SumitPaul/neurosync-multimodal-fusion/blob/main/last_checkpoint.pth
 
