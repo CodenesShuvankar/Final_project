@@ -141,7 +141,120 @@ This diagram shows the end-to-end flow, from user interaction on the frontend to
 
 ---
 
-## 🚀 Getting Started
+## � Dashboard Analytics Architecture
+
+The Profile Dashboard uses a **centralized data architecture** optimized for interactive analytics (similar to Power BI). This ensures efficient performance and enables future filter-based interactions.
+
+### Design Principles
+
+| Principle | Implementation |
+|-----------|----------------|
+| **Single Source of Truth** | Centralized `EMOTION_VALENCE` mapping and `VALENCE_THRESHOLDS` constants |
+| **Compute Once, Use Everywhere** | `useMemo` hook calculates all derived data when mood history changes |
+| **Ready for Interactivity** | Architecture supports adding date range filters, emotion filters, etc. |
+| **Consistent Classification** | All cards use the same thresholds for Positive/Neutral/Negative |
+
+### Valence Mapping
+
+Emotions are mapped to a valence scale from -1 (most negative) to +1 (most positive):
+
+| Emotion | Valence | Category |
+|---------|---------|----------|
+| Happy | +0.8 | Positive |
+| Surprise | +0.4 | Positive |
+| Neutral | 0.0 | Neutral |
+| Disgust | -0.6 | Negative |
+| Sad | -0.7 | Negative |
+| Angry | -0.8 | Negative |
+| Fear | -0.9 | Negative |
+
+**Classification Thresholds:**
+- **Positive**: Valence ≥ +0.3
+- **Neutral**: Valence between -0.3 and +0.3
+- **Negative**: Valence ≤ -0.3
+
+### Centralized Data Flow
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    MOOD HISTORY (Raw Data)                      │
+│         Array of mood detections from /mood-history API         │
+└─────────────────────────────┬───────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              useMemo: DASHBOARD DATA (Computed Once)            │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐ │
+│  │ moodWithValence │  │   moodByDate    │  │  emotionCounts  │ │
+│  │ (pre-calculated │  │ (aggregated by  │  │ (frequency per  │ │
+│  │  valence per    │  │  day for        │  │  emotion type)  │ │
+│  │  mood entry)    │  │  calendar)      │  │                 │ │
+│  └─────────────────┘  └─────────────────┘  └─────────────────┘ │
+│                                                                 │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐ │
+│  │  averageValence │  │    last24h      │  │ valenceCategory │ │
+│  │ (overall avg)   │  │ (recent moods,  │  │ (KPI: category, │ │
+│  │                 │  │  avg, count)    │  │  emoji, color)  │ │
+│  └─────────────────┘  └─────────────────┘  └─────────────────┘ │
+│                                                                 │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │                    months                                │   │
+│  │        (pre-generated 6 months for calendar grid)        │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                                                                 │
+└─────────────────────────────┬───────────────────────────────────┘
+                              │
+          ┌───────────────────┼───────────────────┐
+          │                   │                   │
+          ▼                   ▼                   ▼
+┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
+│  Valence        │ │  Valence Trend  │ │  Mood Calendar  │
+│  Category Card  │ │  Line Chart     │ │  Heatmap        │
+│  (uses KPI      │ │  (uses mood     │ │  (uses moodBy   │
+│   data)         │ │   WithValence)  │ │   Date, months) │
+└─────────────────┘ └─────────────────┘ └─────────────────┘
+          │                   │                   │
+          ▼                   ▼                   ▼
+┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
+│  Primary Mood   │ │  Emotion        │ │  Mood Patterns  │
+│  Card           │ │  Distribution   │ │  Analysis       │
+│  (uses emotion  │ │  Donut Chart    │ │                 │
+│   Counts)       │ │                 │ │                 │
+└─────────────────┘ └─────────────────┘ └─────────────────┘
+```
+
+### Dashboard Cards
+
+| Card | Data Source | Description |
+|------|-------------|-------------|
+| **Valence Category** | `valenceCategory` | KPI showing Positive/Neutral/Negative with traffic-light colors |
+| **Valence Trend** | `moodWithValence` | Line chart showing emotional polarity over last 20 detections |
+| **Mood Calendar** | `moodByDate`, `months` | 6-month heatmap grid (GitHub-style) with daily mood colors |
+| **Primary Mood** | `emotionCounts` | Most frequently detected emotion |
+| **Emotion Distribution** | `emotionCounts` | Donut chart breakdown of all detected emotions |
+
+### Benefits of This Architecture
+
+| Aspect | Before | After |
+|--------|--------|-------|
+| **Calculations** | 6+ duplicate valence computations | 1 computation via `useMemo` |
+| **Re-renders** | Recalculates on every render | Only when `moodHistory` changes |
+| **Consistency** | Scattered threshold definitions | Single `VALENCE_THRESHOLDS` constant |
+| **Extensibility** | Hard to add filters | Ready for date/emotion filters |
+| **Maintainability** | Logic scattered across cards | Centralized in one hook |
+
+### Future Interactive Features (Planned)
+
+- **Date Range Filter**: Filter all cards by custom date range
+- **Emotion Filter**: Toggle specific emotions on/off
+- **Analysis Type Filter**: Voice-only, Face-only, or Combined
+- **Cross-Card Interactions**: Click calendar day to filter other charts
+
+---
+
+## �🚀 Getting Started
 
 Follow these steps to set up and run the project locally.
 
@@ -168,7 +281,7 @@ cd Backend
 
 #Download paste this model to Backend\voice_model\final_voice_model
 https://drive.google.com/drive/folders/1qDL5Arjf2JCxPJ6_73uU_5rOBU9QSzZP?usp=drive_link
-#Download and paste this model to Backend\voice_model
+#Download and paste this model to Backend\video_model
 https://huggingface.co/SumitPaul/neurosync-multimodal-fusion/blob/main/last_checkpoint.pth
 
 

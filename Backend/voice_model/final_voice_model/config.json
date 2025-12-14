@@ -1,5 +1,5 @@
 {
-  "_name_or_path": "/kaggle/working/temp_model/checkpoints/checkpoint-9000",
+  "_name_or_path": "/kaggle/working/temp_model/checkpoints/checkpoint-6000",
   "activation_dropout": 0.0,
   "adapter_attn_dim": null,
   "adapter_kernel_size": 3,

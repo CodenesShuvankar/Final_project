@@ -106,7 +106,8 @@ async def fusion_status():
 # # =============================================
 @app.get("/mood-history")
 async def get_mood_history(
-    limit: int = 20,
+    limit: int = 500,
+    days: int = 30,
     authorization: str = Header(None)
 ):
     """Get user's mood detection history"""

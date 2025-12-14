@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { User, Calendar, Music, LogOut, Plus, Trash2, History, TrendingUp, BarChart3, Loader2 } from 'lucide-react';
@@ -15,6 +15,23 @@ import { AuthService } from '@/lib/services/auth';
 import { PlaylistService } from '@/lib/services/playlistService';
 import { HistoryService, HistoryEntry, ListeningStats } from '@/lib/services/historyService';
 import { Playlist } from '@/lib/supabaseClient';
+
+// Centralized emotion-to-valence mapping (−1 to +1 scale)
+const EMOTION_VALENCE: Record<string, number> = {
+  happy: 0.8,
+  surprise: 0.4,
+  neutral: 0.0,
+  sad: -0.7,
+  angry: -0.8,
+  fear: -0.9,
+  disgust: -0.6
+};
+
+// Valence thresholds for classification
+const VALENCE_THRESHOLDS = {
+  positive: 0.3,  // >= 0.3 is Positive
+  negative: -0.3  // <= -0.3 is Negative
+};
 
 /**
  * Profile page with user info, playlist management, and listening history
@@ -32,6 +49,275 @@ export default function ProfilePage() {
   const [newPlaylistDescription, setNewPlaylistDescription] = useState('');
   const [creating, setCreating] = useState(false);
   const [debugInfo, setDebugInfo] = useState<string>('');
+
+  // ============================================
+  // INTERACTIVE DASHBOARD FILTERS (Power BI style)
+  // ============================================
+  const [dashboardFilter, setDashboardFilter] = useState<{
+    type: 'emotion' | 'date' | 'genre' | 'valenceCategory' | null;
+    value: string | null;
+  }>({ type: null, value: null });
+
+  // Clear all filters
+  const clearFilters = () => setDashboardFilter({ type: null, value: null });
+
+  // Toggle filter (click same item again to deselect)
+  const toggleFilter = (type: 'emotion' | 'date' | 'genre' | 'valenceCategory', value: string) => {
+    if (dashboardFilter.type === type && dashboardFilter.value === value) {
+      clearFilters();
+    } else {
+      setDashboardFilter({ type, value });
+    }
+  };
+
+  // Check if a specific filter is active
+  const isFilterActive = (type: string, value: string) => 
+    dashboardFilter.type === type && dashboardFilter.value === value;
+
+  // Genre to mood mapping (reverse of moodToGenres)
+  const genreToMoods: Record<string, string[]> = {
+    'Pop': ['happy', 'surprise'],
+    'Dance': ['happy', 'surprise'],
+    'Electronic': ['happy', 'surprise'],
+    'Indie': ['sad', 'fear'],
+    'R&B': ['sad'],
+    'Classical': ['sad', 'fear'],
+    'Rock': ['angry', 'disgust'],
+    'Hip Hop': ['angry'],
+    'Metal': ['angry'],
+    'Lo-Fi': ['neutral'],
+    'Jazz': ['neutral'],
+    'Ambient': ['neutral', 'fear'],
+    'Alternative': ['disgust'],
+    'Punk': ['disgust']
+  };
+
+  // ============================================
+  // CENTRALIZED DASHBOARD DATA (computed once)
+  // ============================================
+  const dashboardData = useMemo(() => {
+    if (moodHistory.length === 0) {
+      return {
+        moodWithValence: [],
+        filteredMoods: [],
+        moodByDate: {} as Record<string, { valence: number; count: number; avgValence: number; moods: string[] }>,
+        emotionCounts: {} as Record<string, number>,
+        filteredEmotionCounts: {} as Record<string, number>,
+        totalMoods: 0,
+        filteredTotal: 0,
+        averageValence: 0,
+        filteredAverageValence: 0,
+        last24h: {
+          moods: [] as any[],
+          avgValence: 0,
+          count: 0
+        },
+        valenceCategory: {
+          category: 'N/A' as 'Positive' | 'Neutral' | 'Negative' | 'N/A',
+          emoji: '⚪',
+          textColor: 'text-muted-foreground',
+          timeFrame: 'No data'
+        },
+        months: [] as { name: string; year: number; month: number; days: Date[] }[]
+      };
+    }
+
+    // 1. Add valence to each mood entry
+    const moodWithValence = moodHistory.map(m => ({
+      ...m,
+      valence: EMOTION_VALENCE[m.detected_mood.toLowerCase()] ?? 0,
+      dateStr: new Date(m.created_at).toISOString().split('T')[0]
+    }));
+
+    // 2. Apply filters to get filtered moods
+    let filteredMoods = [...moodWithValence];
+    
+    if (dashboardFilter.type === 'emotion' && dashboardFilter.value) {
+      filteredMoods = filteredMoods.filter(m => 
+        m.detected_mood.toLowerCase() === dashboardFilter.value?.toLowerCase()
+      );
+    } else if (dashboardFilter.type === 'date' && dashboardFilter.value) {
+      filteredMoods = filteredMoods.filter(m => m.dateStr === dashboardFilter.value);
+    } else if (dashboardFilter.type === 'genre' && dashboardFilter.value) {
+      const allowedMoods = genreToMoods[dashboardFilter.value] || [];
+      filteredMoods = filteredMoods.filter(m => 
+        allowedMoods.includes(m.detected_mood.toLowerCase())
+      );
+    } else if (dashboardFilter.type === 'valenceCategory' && dashboardFilter.value) {
+      if (dashboardFilter.value === 'Positive') {
+        filteredMoods = filteredMoods.filter(m => m.valence >= VALENCE_THRESHOLDS.positive);
+      } else if (dashboardFilter.value === 'Negative') {
+        filteredMoods = filteredMoods.filter(m => m.valence <= VALENCE_THRESHOLDS.negative);
+      } else if (dashboardFilter.value === 'Neutral') {
+        filteredMoods = filteredMoods.filter(m => 
+          m.valence > VALENCE_THRESHOLDS.negative && m.valence < VALENCE_THRESHOLDS.positive
+        );
+      }
+    }
+
+    // 3. Count emotions (both total and filtered)
+    const emotionCounts: Record<string, number> = {};
+    moodWithValence.forEach(m => {
+      const mood = m.detected_mood.toLowerCase();
+      emotionCounts[mood] = (emotionCounts[mood] || 0) + 1;
+    });
+
+    const filteredEmotionCounts: Record<string, number> = {};
+    filteredMoods.forEach(m => {
+      const mood = m.detected_mood.toLowerCase();
+      filteredEmotionCounts[mood] = (filteredEmotionCounts[mood] || 0) + 1;
+    });
+
+    // 4. Aggregate by date (for calendar) - include mood list for filtering
+    const moodByDate: Record<string, { valence: number; count: number; avgValence: number; moods: string[] }> = {};
+    moodWithValence.forEach(m => {
+      if (moodByDate[m.dateStr]) {
+        moodByDate[m.dateStr].valence += m.valence;
+        moodByDate[m.dateStr].count += 1;
+        moodByDate[m.dateStr].moods.push(m.detected_mood.toLowerCase());
+      } else {
+        moodByDate[m.dateStr] = { 
+          valence: m.valence, 
+          count: 1, 
+          avgValence: 0,
+          moods: [m.detected_mood.toLowerCase()]
+        };
+      }
+    });
+    Object.keys(moodByDate).forEach(date => {
+      moodByDate[date].avgValence = moodByDate[date].valence / moodByDate[date].count;
+    });
+
+    // 5. Average valence (total and filtered)
+    const totalValence = moodWithValence.reduce((sum, m) => sum + m.valence, 0);
+    const averageValence = totalValence / moodWithValence.length;
+    
+    const filteredTotalValence = filteredMoods.reduce((sum, m) => sum + m.valence, 0);
+    const filteredAverageValence = filteredMoods.length > 0 
+      ? filteredTotalValence / filteredMoods.length 
+      : 0;
+
+    // 6. Last 24 hours data
+    const now = new Date();
+    const last24Hours = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const last24hMoods = moodWithValence.filter(m => new Date(m.created_at) >= last24Hours);
+    const last24hAvgValence = last24hMoods.length > 0
+      ? last24hMoods.reduce((sum, m) => sum + m.valence, 0) / last24hMoods.length
+      : averageValence;
+
+    // 7. Valence category (for KPI card)
+    const valenceToUse = last24hMoods.length > 0 ? last24hAvgValence : (moodWithValence[0]?.valence ?? 0);
+    let category: 'Positive' | 'Neutral' | 'Negative' | 'N/A' = 'Neutral';
+    let emoji = '🟡';
+    let textColor = 'text-yellow-600 dark:text-yellow-400';
+    
+    if (valenceToUse >= VALENCE_THRESHOLDS.positive) {
+      category = 'Positive';
+      emoji = '🟢';
+      textColor = 'text-green-600 dark:text-green-400';
+    } else if (valenceToUse <= VALENCE_THRESHOLDS.negative) {
+      category = 'Negative';
+      emoji = '🔴';
+      textColor = 'text-red-600 dark:text-red-400';
+    }
+
+    const timeFrame = last24hMoods.length > 0 ? 'Last 24h' : 'Latest reading';
+
+    // 8. Generate last 6 months for calendar
+    const today = new Date();
+    const months: { name: string; year: number; month: number; days: Date[] }[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+      const monthName = d.toLocaleString('default', { month: 'short' });
+      const year = d.getFullYear();
+      const month = d.getMonth();
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+      const days: Date[] = [];
+      for (let day = 1; day <= daysInMonth; day++) {
+        const dayDate = new Date(year, month, day);
+        if (dayDate <= today) {
+          days.push(dayDate);
+        }
+      }
+      months.push({ name: monthName, year, month, days });
+    }
+
+    return {
+      moodWithValence,
+      filteredMoods,
+      moodByDate,
+      emotionCounts,
+      filteredEmotionCounts,
+      totalMoods: moodHistory.length,
+      filteredTotal: filteredMoods.length,
+      averageValence,
+      filteredAverageValence,
+      last24h: {
+        moods: last24hMoods,
+        avgValence: last24hAvgValence,
+        count: last24hMoods.length
+      },
+      valenceCategory: {
+        category,
+        emoji,
+        textColor,
+        timeFrame
+      },
+      months
+    };
+  }, [moodHistory, dashboardFilter, genreToMoods]);
+
+  // Helper function to get calendar day color (with filter awareness)
+  const getCalendarDayColor = (date: Date) => {
+    const dateStr = date.toISOString().split('T')[0];
+    const data = dashboardData.moodByDate[dateStr];
+    if (!data) return 'bg-muted/30';
+    
+    // Check if this date is selected
+    const isSelected = isFilterActive('date', dateStr);
+    
+    // Check if this date should be dimmed due to filter
+    let isDimmed = false;
+    if (dashboardFilter.type && dashboardFilter.type !== 'date') {
+      // Check if any mood on this date matches the filter
+      if (dashboardFilter.type === 'emotion') {
+        isDimmed = !data.moods.includes(dashboardFilter.value?.toLowerCase() || '');
+      } else if (dashboardFilter.type === 'genre' && dashboardFilter.value) {
+        const allowedMoods = genreToMoods[dashboardFilter.value] || [];
+        isDimmed = !data.moods.some(m => allowedMoods.includes(m));
+      } else if (dashboardFilter.type === 'valenceCategory') {
+        if (dashboardFilter.value === 'Positive') {
+          isDimmed = data.avgValence < VALENCE_THRESHOLDS.positive;
+        } else if (dashboardFilter.value === 'Negative') {
+          isDimmed = data.avgValence > VALENCE_THRESHOLDS.negative;
+        } else if (dashboardFilter.value === 'Neutral') {
+          isDimmed = data.avgValence >= VALENCE_THRESHOLDS.positive || data.avgValence <= VALENCE_THRESHOLDS.negative;
+        }
+      }
+    }
+    
+    let baseColor = 'bg-yellow-500';
+    if (data.avgValence >= VALENCE_THRESHOLDS.positive) baseColor = 'bg-green-500';
+    else if (data.avgValence <= VALENCE_THRESHOLDS.negative) baseColor = 'bg-red-500';
+    
+    if (isSelected) return `${baseColor} ring-2 ring-white ring-offset-2 ring-offset-background`;
+    if (isDimmed) return `${baseColor} opacity-20`;
+    return baseColor;
+  };
+
+  // Helper function to get calendar day tooltip
+  const getCalendarDayTooltip = (date: Date) => {
+    const dateStr = date.toISOString().split('T')[0];
+    const data = dashboardData.moodByDate[dateStr];
+    const formattedDate = date.toLocaleDateString('default', { month: 'short', day: 'numeric', year: 'numeric' });
+    if (!data) return `${formattedDate}: No mood data`;
+    
+    let category = 'Neutral';
+    if (data.avgValence >= VALENCE_THRESHOLDS.positive) category = 'Positive';
+    else if (data.avgValence <= VALENCE_THRESHOLDS.negative) category = 'Negative';
+    
+    return `${formattedDate}: ${category} (${data.count} check${data.count > 1 ? 's' : ''})`;
+  };
 
   useEffect(() => {
     loadUserData();
@@ -103,8 +389,8 @@ export default function ProfilePage() {
         return;
       }
       
-      // Request last 30 days of mood history
-      const url = `${apiUrl}/mood-history?days=30&limit=100`;
+      // Request all mood history (up to 500 records)
+      const url = `${apiUrl}/mood-history?days=30&limit=500`;
       console.log('  - Fetching from:', url);
       
       const response = await fetch(url, {
@@ -276,10 +562,34 @@ export default function ProfilePage() {
         {/* Dashboard Tab - Analytics Overview */}
         <TabsContent value="dashboard">
           <div className="space-y-6">
+            {/* Active Filter Indicator */}
+            {dashboardFilter.type && (
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-primary/10 border border-primary/20">
+                <span className="text-sm font-medium">🔍 Filtering by:</span>
+                <Badge variant="secondary" className="capitalize">
+                  {dashboardFilter.type === 'emotion' && `Emotion: ${dashboardFilter.value}`}
+                  {dashboardFilter.type === 'date' && `Date: ${new Date(dashboardFilter.value!).toLocaleDateString('default', { month: 'short', day: 'numeric', year: 'numeric' })}`}
+                  {dashboardFilter.type === 'genre' && `Genre: ${dashboardFilter.value}`}
+                  {dashboardFilter.type === 'valenceCategory' && `Valence: ${dashboardFilter.value}`}
+                </Badge>
+                <span className="text-xs text-muted-foreground ml-2">
+                  ({dashboardData.filteredTotal} of {dashboardData.totalMoods} records)
+                </span>
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={clearFilters}
+                  className="ml-auto h-7 px-2 text-xs"
+                >
+                  ✕ Clear Filter
+                </Button>
+              </div>
+            )}
+
             {/* Mood Analytics Stats Cards */}
             {moodHistory.length > 0 && (
               <div className="grid gap-4 md:grid-cols-4">
-                <Card>
+                <Card className={dashboardFilter.type ? 'ring-1 ring-primary/30' : ''}>
                   <CardHeader className="pb-3">
                     <CardTitle className="text-sm font-medium text-muted-foreground">Total Songs</CardTitle>
                   </CardHeader>
@@ -289,28 +599,38 @@ export default function ProfilePage() {
                   </CardContent>
                 </Card>
                 
-                <Card>
+                <Card className={dashboardFilter.type ? 'ring-1 ring-primary/30' : ''}>
                   <CardHeader className="pb-3">
-                    <CardTitle className="text-sm font-medium text-muted-foreground">Mood Checks</CardTitle>
+                    <CardTitle className="text-sm font-medium text-muted-foreground">
+                      {dashboardFilter.type ? 'Filtered Moods' : 'Mood Checks'}
+                    </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="text-3xl font-bold">{moodHistory.length}</div>
-                    <p className="text-xs text-muted-foreground mt-1">Times analyzed</p>
+                    <div className="text-3xl font-bold">
+                      {dashboardFilter.type ? (
+                        <span>{dashboardData.filteredTotal} <span className="text-lg text-muted-foreground font-normal">/ {moodHistory.length}</span></span>
+                      ) : (
+                        moodHistory.length
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {dashboardFilter.type ? 'Matching filter' : 'Times analyzed'}
+                    </p>
                   </CardContent>
                 </Card>
                 
-                <Card>
+                <Card className={dashboardFilter.type ? 'ring-1 ring-primary/30' : ''}>
                   <CardHeader className="pb-3">
-                    <CardTitle className="text-sm font-medium text-muted-foreground">Primary Mood</CardTitle>
+                    <CardTitle className="text-sm font-medium text-muted-foreground">
+                      {dashboardFilter.type ? 'Filtered Primary' : 'Primary Mood'}
+                    </CardTitle>
                   </CardHeader>
                   <CardContent>
                     <div className="text-2xl font-bold capitalize flex items-center gap-2">
                       {(() => {
-                        const moodCounts: Record<string, number> = {};
-                        moodHistory.forEach((m: any) => {
-                          moodCounts[m.detected_mood] = (moodCounts[m.detected_mood] || 0) + 1;
-                        });
-                        const topMood = Object.entries(moodCounts).sort(([,a], [,b]) => b - a)[0];
+                        // Use filtered or total emotion counts based on filter state
+                        const counts = dashboardFilter.type ? dashboardData.filteredEmotionCounts : dashboardData.emotionCounts;
+                        const topMood = Object.entries(counts).sort(([,a], [,b]) => b - a)[0];
                         const moodEmojis: Record<string, string> = {
                           happy: '😊', sad: '😢', angry: '😠', neutral: '😐',
                           fear: '😨', disgust: '🤢', surprise: '😲'
@@ -318,27 +638,57 @@ export default function ProfilePage() {
                         return topMood ? <>{moodEmojis[topMood[0].toLowerCase()] || '😊'} {topMood[0]}</> : 'N/A';
                       })()}
                     </div>
-                    <p className="text-xs text-muted-foreground mt-1">Most frequent</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {dashboardFilter.type ? 'In filtered data' : 'Most frequent'}
+                    </p>
                   </CardContent>
                 </Card>
                 
-                <Card>
+                <Card className={dashboardFilter.type ? 'ring-1 ring-primary/30' : ''}>
                   <CardHeader className="pb-3">
-                    <CardTitle className="text-sm font-medium text-muted-foreground">Recent Mood</CardTitle>
+                    <CardTitle className="text-sm font-medium text-muted-foreground">
+                      {dashboardFilter.type ? 'Filtered Valence' : 'Valence Category'}
+                    </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="text-2xl font-bold capitalize flex items-center gap-2">
+                    <div className="text-2xl font-bold capitalize">
                       {(() => {
-                        const latest = moodHistory[0];
-                        const moodEmojis: Record<string, string> = {
-                          happy: '😊', sad: '😢', angry: '😠', neutral: '😐',
-                          fear: '😨', disgust: '🤢', surprise: '😲'
-                        };
-                        return latest ? <>{moodEmojis[latest.detected_mood.toLowerCase()] || '😊'} {latest.detected_mood}</> : 'N/A';
+                        // Calculate valence category based on filter state
+                        if (dashboardFilter.type && dashboardData.filteredMoods.length > 0) {
+                          const avgValence = dashboardData.filteredAverageValence;
+                          let category = 'Neutral';
+                          let emoji = '🟡';
+                          let textColor = 'text-yellow-600 dark:text-yellow-400';
+                          
+                          if (avgValence >= VALENCE_THRESHOLDS.positive) {
+                            category = 'Positive';
+                            emoji = '🟢';
+                            textColor = 'text-green-600 dark:text-green-400';
+                          } else if (avgValence <= VALENCE_THRESHOLDS.negative) {
+                            category = 'Negative';
+                            emoji = '🔴';
+                            textColor = 'text-red-600 dark:text-red-400';
+                          }
+                          
+                          return (
+                            <span className={textColor}>
+                              {emoji} {category}
+                            </span>
+                          );
+                        }
+                        
+                        return (
+                          <span className={dashboardData.valenceCategory.textColor}>
+                            {dashboardData.valenceCategory.emoji} {dashboardData.valenceCategory.category}
+                          </span>
+                        );
                       })()}
                     </div>
                     <p className="text-xs text-muted-foreground mt-1">
-                      {moodHistory[0] ? new Date(moodHistory[0].created_at).toLocaleDateString() : 'Never'}
+                      {dashboardFilter.type 
+                        ? `Avg: ${dashboardData.filteredAverageValence.toFixed(2)}`
+                        : dashboardData.valenceCategory.timeFrame
+                      }
                     </p>
                   </CardContent>
                 </Card>
@@ -393,207 +743,293 @@ export default function ProfilePage() {
               </Card>
             )}
 
-            {/* Mood Distribution Chart */}
+            {/* Emotion Distribution and Valence Charts */}
             {moodHistory.length > 0 && (
               <div className="grid gap-6 md:grid-cols-2">
+                {/* Card 1: Emotion Distribution Donut Chart */}
                 <Card>
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                       <BarChart3 className="h-5 w-5" />
                       Emotion Distribution
                     </CardTitle>
-                    <CardDescription>Breakdown of your detected moods</CardDescription>
+                    <CardDescription>Click a segment to filter dashboard</CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <div className="space-y-6">
-                      {/* Mood Distribution Bars */}
-                      <div className="space-y-3">
-                        {(() => {
-                          const moodCounts: Record<string, number> = {};
-                          moodHistory.forEach((m: any) => {
-                            moodCounts[m.detected_mood] = (moodCounts[m.detected_mood] || 0) + 1;
-                          });
-                          const total = moodHistory.length;
-                          const moodEmojis: Record<string, string> = {
-                            happy: '😊', sad: '😢', angry: '😠', neutral: '😐',
-                            fear: '😨', disgust: '🤢', surprise: '😲'
-                          };
-                          
-                          return Object.entries(moodCounts)
-                            .sort(([,a], [,b]) => b - a)
-                            .map(([mood, count]) => {
-                              const percentage = Math.round((count / total) * 100);
-                              return (
-                                <div key={mood} className="flex items-center gap-3">
-                                  <div className="text-2xl">{moodEmojis[mood.toLowerCase()] || '😊'}</div>
-                                  <div className="flex-1 min-w-0">
-                                    <div className="flex items-center justify-between mb-1">
-                                      <p className="font-medium capitalize">{mood}</p>
-                                      <span className="text-sm text-muted-foreground">{count} times ({percentage}%)</span>
-                                    </div>
-                                    <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
-                                      <div
-                                        className="h-full bg-gradient-to-r from-primary to-primary/60 rounded-full transition-all"
-                                        style={{ width: `${percentage}%` }}
-                                      />
-                                    </div>
-                                  </div>
-                                </div>
-                              );
-                            });
-                        })()}
-                      </div>
-
-                      {/* Mood Variation Timeline Chart */}
-                      <div className="pt-4 border-t">
-                        <h4 className="text-sm font-semibold mb-3 text-muted-foreground">Mood Variation Over Time</h4>
-                        <div className="relative h-48">
-                          {(() => {
-                            // Define mood intensity levels (vertical position)
-                            // Neutral is baseline (50), good moods above, bad moods below
-                            const moodIntensity: Record<string, number> = {
-                              // Good moods - above neutral
-                              happy: 75,      // Top positive
-                              surprise: 65,   // Upper positive
-                              
-                              // Baseline
-                              neutral: 50,    // Middle - baseline
-                              
-                              // Bad moods - below neutral
-                              disgust: 35,    // Upper negative
-                              fear: 25,       // Mid negative
-                              sad: 15,        // Lower negative
-                              angry: 5        // Bottom - most negative
-                            };
-
-                            // Get last 20 mood entries (most recent first, so reverse for timeline)
-                            const recentMoods = [...moodHistory].slice(0, 20).reverse();
-                            if (recentMoods.length === 0) return null;
-
-                            const points = recentMoods.map((m: any, index: number) => {
-                              const mood = m.detected_mood.toLowerCase();
-                              const x = (index / (recentMoods.length - 1)) * 100;
-                              const y = 100 - (moodIntensity[mood] || 50);
-                              return { x, y, mood, date: m.created_at };
-                            });
-
-                            // Create SVG path
-                            const pathData = points.map((p, i) => 
-                              `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`
-                            ).join(' ');
-
-                            // Create area fill path
-                            const areaPath = `${pathData} L ${points[points.length - 1].x} 100 L 0 100 Z`;
-
-                            const moodColors: Record<string, string> = {
-                              happy: '#22c55e', sad: '#3b82f6', angry: '#ef4444',
-                              neutral: '#94a3b8', fear: '#f59e0b', disgust: '#10b981',
-                              surprise: '#8b5cf6'
-                            };
-
-                            return (
-                              <div className="relative w-full h-full">
-                                {/* Y-axis labels */}
-                                <div className="absolute left-0 top-0 bottom-0 flex flex-col justify-between text-[10px] text-muted-foreground pr-2">
-                                  <span>Intense</span>
-                                  <span>Neutral</span>
-                                  <span>Low</span>
-                                </div>
-
-                                {/* Chart container */}
-                                <div className="absolute left-12 right-0 top-0 bottom-0">
-                                  <svg viewBox="0 0 100 100" className="w-full h-full" preserveAspectRatio="none">
-                                    {/* Grid lines */}
-                                    <line x1="0" y1="10" x2="100" y2="10" stroke="currentColor" strokeWidth="0.2" className="text-muted-foreground/20" />
-                                    <line x1="0" y1="50" x2="100" y2="50" stroke="currentColor" strokeWidth="0.2" className="text-muted-foreground/30" strokeDasharray="2,2" />
-                                    <line x1="0" y1="90" x2="100" y2="90" stroke="currentColor" strokeWidth="0.2" className="text-muted-foreground/20" />
-
-                                    {/* Area fill */}
+                    {(() => {
+                      const moodCounts: Record<string, number> = {};
+                      moodHistory.forEach((m: any) => {
+                        moodCounts[m.detected_mood] = (moodCounts[m.detected_mood] || 0) + 1;
+                      });
+                      const total = moodHistory.length;
+                      const moodEmojis: Record<string, string> = {
+                        happy: '😊', sad: '😢', angry: '😠', neutral: '😐',
+                        fear: '😨', disgust: '🤢', surprise: '😲'
+                      };
+                      const moodColors: Record<string, string> = {
+                        happy: '#22c55e', sad: '#3b82f6', angry: '#ef4444',
+                        neutral: '#94a3b8', fear: '#f59e0b', disgust: '#10b981',
+                        surprise: '#8b5cf6'
+                      };
+                      
+                      const sortedMoods = Object.entries(moodCounts).sort(([,a], [,b]) => b - a);
+                      const totalAngle = 360;
+                      let currentAngle = 0;
+                      
+                      return (
+                        <div className="space-y-6">
+                          {/* Donut Chart */}
+                          <div className="flex items-center justify-center">
+                            <div className="relative w-64 h-64">
+                              <svg viewBox="0 0 100 100" className="w-full h-full transform -rotate-90" style={{ pointerEvents: 'all' }}>
+                                {sortedMoods.map(([mood, count], index) => {
+                                  const percentage = (count / total) * 100;
+                                  const angle = (count / total) * totalAngle;
+                                  const startAngle = currentAngle;
+                                  currentAngle += angle;
+                                  
+                                  // Calculate arc path
+                                  const startRad = (startAngle * Math.PI) / 180;
+                                  const endRad = (currentAngle * Math.PI) / 180;
+                                  const largeArc = angle > 180 ? 1 : 0;
+                                  
+                                  const outerRadius = 45;
+                                  const innerRadius = 28;
+                                  
+                                  const x1 = 50 + outerRadius * Math.cos(startRad);
+                                  const y1 = 50 + outerRadius * Math.sin(startRad);
+                                  const x2 = 50 + outerRadius * Math.cos(endRad);
+                                  const y2 = 50 + outerRadius * Math.sin(endRad);
+                                  const x3 = 50 + innerRadius * Math.cos(endRad);
+                                  const y3 = 50 + innerRadius * Math.sin(endRad);
+                                  const x4 = 50 + innerRadius * Math.cos(startRad);
+                                  const y4 = 50 + innerRadius * Math.sin(startRad);
+                                  
+                                  const pathData = [
+                                    `M ${x1} ${y1}`,
+                                    `A ${outerRadius} ${outerRadius} 0 ${largeArc} 1 ${x2} ${y2}`,
+                                    `L ${x3} ${y3}`,
+                                    `A ${innerRadius} ${innerRadius} 0 ${largeArc} 0 ${x4} ${y4}`,
+                                    'Z'
+                                  ].join(' ');
+                                  
+                                  // Check if this emotion is selected or should be dimmed
+                                  const isSelected = isFilterActive('emotion', mood.toLowerCase());
+                                  const isDimmed = dashboardFilter.type && !isSelected;
+                                  
+                                  return (
                                     <path
-                                      d={areaPath}
-                                      fill="url(#moodGradient)"
-                                      opacity="0.2"
-                                    />
-
-                                    {/* Line */}
-                                    <path
+                                      key={mood}
                                       d={pathData}
-                                      fill="none"
-                                      stroke="url(#lineGradient)"
-                                      strokeWidth="0.8"
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
+                                      fill={moodColors[mood.toLowerCase()] || '#94a3b8'}
+                                      style={{ 
+                                        cursor: 'pointer', 
+                                        pointerEvents: 'all',
+                                        opacity: isDimmed ? 0.25 : 1,
+                                        transition: 'all 0.2s ease',
+                                        stroke: isSelected ? 'white' : 'transparent',
+                                        strokeWidth: isSelected ? 2 : 0
+                                      }}
+                                      onMouseEnter={(e) => { if (!isDimmed) e.currentTarget.style.opacity = '0.8'; }}
+                                      onMouseLeave={(e) => { e.currentTarget.style.opacity = isDimmed ? '0.25' : '1'; }}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        toggleFilter('emotion', mood.toLowerCase());
+                                      }}
                                     />
+                                  );
+                                })}
+                              </svg>
+                              
+                              {/* Center text */}
+                              <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                                <div className="text-3xl font-bold">{dashboardFilter.type ? dashboardData.filteredTotal : total}</div>
+                                <div className="text-xs text-muted-foreground">
+                                  {dashboardFilter.type ? 'Filtered' : 'Total Moods'}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                          
+                          {/* Legend - Horizontal Button Array */}
+                          <div className="flex gap-2 justify-center overflow-x-auto pb-1">
+                            {sortedMoods.map(([mood, count]) => {
+                              const percentage = Math.round((count / total) * 100);
+                              const isSelected = isFilterActive('emotion', mood.toLowerCase());
+                              const isDimmed = dashboardFilter.type && !isSelected;
+                              return (
+                                <button 
+                                  key={mood}
+                                  type="button"
+                                  className={`flex-shrink-0 flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium transition-all border ${isSelected ? 'bg-primary text-primary-foreground border-primary shadow-md' : 'bg-muted/30 hover:bg-muted/60 border-border'} ${isDimmed ? 'opacity-30' : ''}`}
+                                  onClick={() => toggleFilter('emotion', mood.toLowerCase())}
+                                >
+                                  <div 
+                                    className="w-2 h-2 rounded-full"
+                                    style={{ backgroundColor: isSelected ? 'white' : (moodColors[mood.toLowerCase()] || '#94a3b8') }}
+                                  />
+                                  <span className="capitalize whitespace-nowrap">
+                                    {moodEmojis[mood.toLowerCase()] || '😊'} {mood}
+                                  </span>
+                                  <span className={`${isSelected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>
+                                    {percentage}%
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </CardContent>
+                </Card>
 
-                                    {/* Data points */}
-                                    {points.map((p, i) => (
-                                      <g key={i}>
+                {/* Card 2: Valence Trend Over Time */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <TrendingUp className="h-5 w-5" />
+                      Valence Trend Over Time
+                    </CardTitle>
+                    <CardDescription>Click points to filter by valence category</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-4">
+                      <div className="relative h-72 bg-muted/20 rounded-lg p-4">
+                        {(() => {
+                          // Get last 20 mood entries with valence (most recent first, so reverse for timeline)
+                          const recentMoods = [...dashboardData.moodWithValence].slice(0, 20).reverse();
+                          if (recentMoods.length === 0) return null;
+
+                          // Calculate valence for each mood and map to chart coordinates
+                          const points = recentMoods.map((m: any, index: number) => {
+                            const x = (index / Math.max(recentMoods.length - 1, 1)) * 100;
+                            // Map valence (-1 to +1) to Y coordinate (100 to 0)
+                            const y = 50 - (m.valence * 50);
+                            // Determine valence category
+                            const category = m.valence >= VALENCE_THRESHOLDS.positive ? 'Positive' : 
+                                           m.valence <= VALENCE_THRESHOLDS.negative ? 'Negative' : 'Neutral';
+                            return { x, y, valence: m.valence, mood: m.detected_mood, date: m.created_at, dateStr: m.dateStr, category };
+                          });
+
+                          // Create SVG path with smooth curves
+                          const pathData = points.map((p, i) => 
+                            `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`
+                          ).join(' ');
+
+                          return (
+                            <div className="relative w-full h-full">
+                              {/* Y-axis labels */}
+                              <div className="absolute left-0 top-0 bottom-6 flex flex-col justify-between text-xs text-muted-foreground/80 pr-2 w-16">
+                                <span className="text-right">+1.0</span>
+                                <span className="text-right">0.0</span>
+                                <span className="text-right">-1.0</span>
+                              </div>
+
+                              {/* Chart area */}
+                              <div className="absolute left-16 right-0 top-0 bottom-6">
+                                <svg viewBox="0 0 100 100" className="w-full h-full overflow-visible">
+                                  <defs>
+                                    {/* Gradients */}
+                                    <linearGradient id="lineGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                                      <stop offset="0%" stopColor="hsl(var(--primary))" stopOpacity="0.8" />
+                                      <stop offset="50%" stopColor="hsl(var(--primary))" stopOpacity="0.6" />
+                                      <stop offset="100%" stopColor="hsl(var(--primary))" stopOpacity="0.8" />
+                                    </linearGradient>
+                                  </defs>
+
+                                  {/* Grid lines - subtle */}
+                                  <line x1="0" y1="0" x2="100" y2="0" stroke="currentColor" strokeWidth="0.15" className="text-border" />
+                                  <line x1="0" y1="50" x2="100" y2="50" stroke="currentColor" strokeWidth="0.25" className="text-border" strokeDasharray="3,3" />
+                                  <line x1="0" y1="100" x2="100" y2="100" stroke="currentColor" strokeWidth="0.15" className="text-border" />
+
+                                  {/* Main line */}
+                                  <path
+                                    d={pathData}
+                                    fill="none"
+                                    stroke="url(#lineGradient)"
+                                    strokeWidth="2"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                  />
+
+                                  {/* Data points */}
+                                  {points.map((p, i) => {
+                                    const pointColor = p.valence >= VALENCE_THRESHOLDS.positive ? '#22c55e' : 
+                                                      p.valence <= VALENCE_THRESHOLDS.negative ? '#ef4444' : 
+                                                      '#94a3b8';
+                                    
+                                    // Check if this point's category is selected or should be dimmed
+                                    const isSelected = isFilterActive('valenceCategory', p.category);
+                                    const isDimmed = dashboardFilter.type && !isSelected && 
+                                      !(dashboardFilter.type === 'valenceCategory' && !dashboardFilter.value);
+                                    
+                                    return (
+                                      <g key={i} className="cursor-pointer" onClick={() => toggleFilter('valenceCategory', p.category)}>
+                                        {/* Outer glow circle */}
                                         <circle
                                           cx={p.x}
                                           cy={p.y}
-                                          r="1.5"
-                                          fill={moodColors[p.mood] || '#94a3b8'}
-                                          className="hover:r-3 transition-all"
+                                          r={isSelected ? "3.5" : "2.5"}
+                                          fill={pointColor}
+                                          opacity={isDimmed ? "0.1" : "0.3"}
+                                        />
+                                        {/* Main point */}
+                                        <circle
+                                          cx={p.x}
+                                          cy={p.y}
+                                          r={isSelected ? "2.5" : "1.8"}
+                                          fill={pointColor}
+                                          className={`transition-all ${isDimmed ? 'opacity-20' : ''}`}
+                                          stroke={isSelected ? "white" : "none"}
+                                          strokeWidth={isSelected ? "0.5" : "0"}
+                                        />
+                                        {/* Hover hitbox - larger invisible circle for easier clicking */}
+                                        <circle
+                                          cx={p.x}
+                                          cy={p.y}
+                                          r="5"
+                                          fill="transparent"
+                                          className="cursor-pointer"
                                         />
                                       </g>
-                                    ))}
+                                    );
+                                  })}
+                                </svg>
 
-                                    {/* Gradients */}
-                                    <defs>
-                                      <linearGradient id="moodGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                                        <stop offset="0%" stopColor="#ef4444" stopOpacity="0.3" />
-                                        <stop offset="50%" stopColor="#94a3b8" stopOpacity="0.2" />
-                                        <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.3" />
-                                      </linearGradient>
-                                      <linearGradient id="lineGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                                        <stop offset="0%" stopColor="#8b5cf6" />
-                                        <stop offset="50%" stopColor="#3b82f6" />
-                                        <stop offset="100%" stopColor="#22c55e" />
-                                      </linearGradient>
-                                    </defs>
-                                  </svg>
-
-                                  {/* X-axis labels */}
-                                  <div className="absolute -bottom-5 left-0 right-0 flex justify-between text-[10px] text-muted-foreground">
-                                    <span>Oldest</span>
-                                    <span>Recent</span>
-                                  </div>
+                                {/* X-axis labels */}
+                                <div className="absolute -bottom-5 left-0 right-0 flex justify-between text-xs text-muted-foreground/80">
+                                  <span>Oldest</span>
+                                  <span>Recent</span>
                                 </div>
                               </div>
-                            );
-                          })()}
-                        </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
 
-                        {/* Legend - Color-coded dots */}
-                        <div className="flex flex-wrap gap-x-4 gap-y-2 justify-center pt-6 mt-2">
-                          <div className="flex items-center gap-1.5">
-                            <div className="w-2 h-2 rounded-full bg-red-500"></div>
-                            <span className="text-xs text-muted-foreground">Angry</span>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <div className="w-2 h-2 rounded-full bg-amber-500"></div>
-                            <span className="text-xs text-muted-foreground">Fear</span>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
-                            <span className="text-xs text-muted-foreground">Disgust</span>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <div className="w-2 h-2 rounded-full bg-slate-400"></div>
-                            <span className="text-xs text-muted-foreground">Neutral</span>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <div className="w-2 h-2 rounded-full bg-purple-500"></div>
-                            <span className="text-xs text-muted-foreground">Surprise</span>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <div className="w-2 h-2 rounded-full bg-green-500"></div>
-                            <span className="text-xs text-muted-foreground">Happy</span>
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <div className="w-2 h-2 rounded-full bg-blue-500"></div>
-                            <span className="text-xs text-muted-foreground">Sad</span>
-                          </div>
+                      {/* Legend */}
+                      <div className="flex items-center justify-center gap-4 text-xs">
+                        <div 
+                          className={`flex items-center gap-1.5 cursor-pointer p-1.5 rounded-md transition-all ${isFilterActive('valenceCategory', 'Positive') ? 'bg-green-500/20 ring-1 ring-green-500/50' : 'hover:bg-muted/50'} ${dashboardFilter.type && !isFilterActive('valenceCategory', 'Positive') ? 'opacity-40' : ''}`}
+                          onClick={() => toggleFilter('valenceCategory', 'Positive')}
+                        >
+                          <div className="w-2.5 h-2.5 rounded-full bg-green-500"></div>
+                          <span className="text-muted-foreground">Positive</span>
+                        </div>
+                        <div 
+                          className={`flex items-center gap-1.5 cursor-pointer p-1.5 rounded-md transition-all ${isFilterActive('valenceCategory', 'Neutral') ? 'bg-slate-400/20 ring-1 ring-slate-400/50' : 'hover:bg-muted/50'} ${dashboardFilter.type && !isFilterActive('valenceCategory', 'Neutral') ? 'opacity-40' : ''}`}
+                          onClick={() => toggleFilter('valenceCategory', 'Neutral')}
+                        >
+                          <div className="w-2.5 h-2.5 rounded-full bg-slate-400"></div>
+                          <span className="text-muted-foreground">Neutral</span>
+                        </div>
+                        <div 
+                          className={`flex items-center gap-1.5 cursor-pointer p-1.5 rounded-md transition-all ${isFilterActive('valenceCategory', 'Negative') ? 'bg-red-500/20 ring-1 ring-red-500/50' : 'hover:bg-muted/50'} ${dashboardFilter.type && !isFilterActive('valenceCategory', 'Negative') ? 'opacity-40' : ''}`}
+                          onClick={() => toggleFilter('valenceCategory', 'Negative')}
+                        >
+                          <div className="w-2.5 h-2.5 rounded-full bg-red-500"></div>
+                          <span className="text-muted-foreground">Negative</span>
                         </div>
                       </div>
                     </div>
@@ -850,13 +1286,96 @@ export default function ProfilePage() {
                     </div>
                   </CardContent>
                 </Card>
+
+                {/* Mood Calendar - Last 6 Months */}
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <Calendar className="h-5 w-5" />
+                      Mood Calendar
+                    </CardTitle>
+                    <CardDescription>Click a day to filter by date</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-4">
+                      {/* 2x3 Grid of months */}
+                      <div className="grid grid-cols-3 gap-4">
+                        {dashboardData.months.map((monthData, idx) => {
+                          // Get first day of month (0 = Sunday, 1 = Monday, etc.)
+                          const firstDayOfMonth = new Date(monthData.year, monthData.month, 1).getDay();
+                          
+                          return (
+                            <div key={idx} className="space-y-2">
+                              <div className="text-xs font-medium text-center text-muted-foreground">
+                                {monthData.name} {monthData.year}
+                              </div>
+                              {/* Day labels */}
+                              <div className="grid grid-cols-7 gap-[2px] text-[8px] text-muted-foreground text-center mb-1">
+                                <span>S</span><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span>
+                              </div>
+                              {/* Calendar grid */}
+                              <div className="grid grid-cols-7 gap-[2px]">
+                                {/* Empty cells for offset */}
+                                {Array.from({ length: firstDayOfMonth }).map((_, i) => (
+                                  <div key={`empty-${i}`} className="aspect-square rounded-sm" />
+                                ))}
+                                {/* Day cells */}
+                                {monthData.days.map((day, dayIdx) => {
+                                  const dateStr = day.toISOString().split('T')[0];
+                                  const hasMoodData = !!dashboardData.moodByDate[dateStr];
+                                  return (
+                                    <div
+                                      key={dayIdx}
+                                      className={`aspect-square rounded-sm ${getCalendarDayColor(day)} transition-all hover:scale-125 hover:z-10 ${hasMoodData ? 'cursor-pointer' : ''}`}
+                                      title={getCalendarDayTooltip(day)}
+                                      onClick={() => hasMoodData && toggleFilter('date', dateStr)}
+                                    />
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Legend */}
+                      <div className="flex items-center justify-center gap-4 pt-2 border-t">
+                        <div 
+                          className={`flex items-center gap-1.5 cursor-pointer p-1 rounded transition-all ${isFilterActive('valenceCategory', 'Positive') ? 'bg-green-500/20 ring-1 ring-green-500/50' : 'hover:bg-muted/50'} ${dashboardFilter.type && !isFilterActive('valenceCategory', 'Positive') ? 'opacity-40' : ''}`}
+                          onClick={() => toggleFilter('valenceCategory', 'Positive')}
+                        >
+                          <div className="w-3 h-3 rounded-sm bg-green-500" />
+                          <span className="text-xs text-muted-foreground">Positive</span>
+                        </div>
+                        <div 
+                          className={`flex items-center gap-1.5 cursor-pointer p-1 rounded transition-all ${isFilterActive('valenceCategory', 'Neutral') ? 'bg-yellow-500/20 ring-1 ring-yellow-500/50' : 'hover:bg-muted/50'} ${dashboardFilter.type && !isFilterActive('valenceCategory', 'Neutral') ? 'opacity-40' : ''}`}
+                          onClick={() => toggleFilter('valenceCategory', 'Neutral')}
+                        >
+                          <div className="w-3 h-3 rounded-sm bg-yellow-500" />
+                          <span className="text-xs text-muted-foreground">Neutral</span>
+                        </div>
+                        <div 
+                          className={`flex items-center gap-1.5 cursor-pointer p-1 rounded transition-all ${isFilterActive('valenceCategory', 'Negative') ? 'bg-red-500/20 ring-1 ring-red-500/50' : 'hover:bg-muted/50'} ${dashboardFilter.type && !isFilterActive('valenceCategory', 'Negative') ? 'opacity-40' : ''}`}
+                          onClick={() => toggleFilter('valenceCategory', 'Negative')}
+                        >
+                          <div className="w-3 h-3 rounded-sm bg-red-500" />
+                          <span className="text-xs text-muted-foreground">Negative</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-3 h-3 rounded-sm bg-muted/30" />
+                          <span className="text-xs text-muted-foreground">No data</span>
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
               </div>
             )}
 
             {/* Top Genres & Top Artists - side by side */}
             {(moodHistory.length > 0 || (stats && stats.top_artists.length > 0)) && (
               <div className="grid gap-4 md:grid-cols-2">
-                {/* Top Genres */}
+                {/* Top Genres - Treemap */}
                 {moodHistory.length > 0 && (
                   <Card>
                     <CardHeader>
@@ -864,91 +1383,183 @@ export default function ProfilePage() {
                         <Music className="h-5 w-5" />
                         Top Genres
                       </CardTitle>
-                      <CardDescription>Your favorite music genres</CardDescription>
+                      <CardDescription>Click a genre to filter dashboard</CardDescription>
                     </CardHeader>
                     <CardContent>
-                      <div className="space-y-3">
-                        {(() => {
-                          // Map moods to likely genre preferences
-                          const moodToGenres: Record<string, string[]> = {
-                            happy: ['Pop', 'Dance', 'Electronic'],
-                            sad: ['Indie', 'R&B', 'Classical'],
-                            angry: ['Rock', 'Hip Hop', 'Metal'],
-                            neutral: ['Lo-Fi', 'Jazz', 'Ambient'],
-                            fear: ['Classical', 'Ambient', 'Indie'],
-                            disgust: ['Rock', 'Alternative', 'Punk'],
-                            surprise: ['Electronic', 'Dance', 'Pop']
-                          };
+                      {(() => {
+                        // Map moods to likely genre preferences
+                        const moodToGenres: Record<string, string[]> = {
+                          happy: ['Pop', 'Dance', 'Electronic'],
+                          sad: ['Indie', 'R&B', 'Classical'],
+                          angry: ['Rock', 'Hip Hop', 'Metal'],
+                          neutral: ['Lo-Fi', 'Jazz', 'Ambient'],
+                          fear: ['Classical', 'Ambient', 'Indie'],
+                          disgust: ['Rock', 'Alternative', 'Punk'],
+                          surprise: ['Electronic', 'Dance', 'Pop']
+                        };
 
-                          const genreColors: Record<string, string> = {
-                            'Pop': 'bg-pink-500',
-                            'Rock': 'bg-blue-500',
-                            'Hip Hop': 'bg-green-500',
-                            'Electronic': 'bg-orange-500',
-                            'Jazz': 'bg-purple-500',
-                            'Classical': 'bg-gray-500',
-                            'Indie': 'bg-rose-500',
-                            'R&B': 'bg-indigo-500',
-                            'Country': 'bg-emerald-500',
-                            'Lo-Fi': 'bg-amber-500',
-                            'Dance': 'bg-cyan-500',
-                            'Metal': 'bg-red-500',
-                            'Ambient': 'bg-teal-500',
-                            'Alternative': 'bg-violet-500',
-                            'Punk': 'bg-red-600'
-                          };
+                        const genreColors: Record<string, string> = {
+                          'Pop': 'bg-pink-500 hover:bg-pink-400',
+                          'Rock': 'bg-blue-500 hover:bg-blue-400',
+                          'Hip Hop': 'bg-green-500 hover:bg-green-400',
+                          'Electronic': 'bg-orange-500 hover:bg-orange-400',
+                          'Jazz': 'bg-purple-500 hover:bg-purple-400',
+                          'Classical': 'bg-gray-500 hover:bg-gray-400',
+                          'Indie': 'bg-rose-500 hover:bg-rose-400',
+                          'R&B': 'bg-indigo-500 hover:bg-indigo-400',
+                          'Country': 'bg-emerald-500 hover:bg-emerald-400',
+                          'Lo-Fi': 'bg-amber-500 hover:bg-amber-400',
+                          'Dance': 'bg-cyan-500 hover:bg-cyan-400',
+                          'Metal': 'bg-red-500 hover:bg-red-400',
+                          'Ambient': 'bg-teal-500 hover:bg-teal-400',
+                          'Alternative': 'bg-violet-500 hover:bg-violet-400',
+                          'Punk': 'bg-red-600 hover:bg-red-500'
+                        };
 
-                          // Calculate genre scores based on mood frequency
-                          const genreScores: Record<string, number> = {};
+                        // Calculate genre scores based on mood frequency
+                        // Use filtered data when filter is active (except genre filter itself)
+                        const genreScores: Record<string, number> = {};
+                        const moodsToUse = (dashboardFilter.type && dashboardFilter.type !== 'genre') 
+                          ? dashboardData.filteredMoods 
+                          : moodHistory;
+                        
+                        moodsToUse.forEach((m: any) => {
+                          const mood = m.detected_mood.toLowerCase();
+                          const genres = moodToGenres[mood] || ['Pop', 'Rock', 'Jazz'];
                           
-                          moodHistory.forEach((m: any) => {
-                            const mood = m.detected_mood.toLowerCase();
-                            const genres = moodToGenres[mood] || ['Pop', 'Rock', 'Jazz'];
-                            
-                            genres.forEach((genre, index) => {
-                              // First genre gets more weight
-                              const weight = 1 / (index + 1);
-                              genreScores[genre] = (genreScores[genre] || 0) + weight;
-                            });
+                          genres.forEach((genre, index) => {
+                            const weight = 1 / (index + 1);
+                            genreScores[genre] = (genreScores[genre] || 0) + weight;
                           });
+                        });
 
-                          // Get top 5 genres
-                          const topGenres = Object.entries(genreScores)
-                            .sort(([,a], [,b]) => b - a)
-                            .slice(0, 5);
+                        // Get top 8 genres for treemap
+                        const topGenres = Object.entries(genreScores)
+                          .sort(([,a], [,b]) => b - a)
+                          .slice(0, 8);
 
-                          const maxScore = topGenres[0]?.[1] || 1;
-
-                          return topGenres.length > 0 ? topGenres.map(([genre, score], index) => {
-                            const percentage = Math.round((score / maxScore) * 100);
-                            const displayPercentage = Math.round((score / moodHistory.length) * 100);
-                            
-                            return (
-                              <div key={genre} className="flex items-center gap-3">
-                                <div className={`flex-shrink-0 w-12 h-12 rounded-lg ${genreColors[genre] || 'bg-primary'} flex items-center justify-center text-white font-bold text-xs shadow-md`}>
-                                  {genre.slice(0, 3).toUpperCase()}
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center justify-between mb-1">
-                                    <p className="font-medium">{genre}</p>
-                                    <span className="text-sm text-muted-foreground">{displayPercentage}%</span>
-                                  </div>
-                                  <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
-                                    <div
-                                      className={`h-full ${genreColors[genre] || 'bg-primary'} rounded-full transition-all`}
-                                      style={{ width: `${percentage}%` }}
-                                    />
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                          }) : (
+                        if (topGenres.length === 0) {
+                          return (
                             <p className="text-sm text-muted-foreground text-center py-4">
-                              No genre data available yet. Keep using mood detection!
+                              {dashboardFilter.type ? 'No genres match this filter' : 'No genre data available yet. Keep using mood detection!'}
                             </p>
                           );
-                        })()}
-                      </div>
+                        }
+
+                        const totalScore = topGenres.reduce((sum, [, score]) => sum + score, 0);
+
+                        // Calculate treemap layout (simplified squarified algorithm)
+                        const treemapData = topGenres.map(([genre, score]) => ({
+                          genre,
+                          score,
+                          percentage: Math.round((score / totalScore) * 100),
+                          color: genreColors[genre] || 'bg-primary hover:bg-primary/80'
+                        }));
+
+                        return (
+                          <div className="space-y-3">
+                            {/* Treemap Container */}
+                            <div className="relative h-64 rounded-lg overflow-hidden border border-border/50 bg-background p-1 flex flex-col gap-1">
+                              {/* Row 1: Top 2 genres */}
+                              <div className="flex h-[50%] gap-1">
+                                {treemapData.slice(0, 2).map((item, idx) => {
+                                  const width = treemapData.length > 1 
+                                    ? (item.percentage / (treemapData[0].percentage + (treemapData[1]?.percentage || 0))) * 100
+                                    : 100;
+                                  const isSelected = isFilterActive('genre', item.genre);
+                                  const isDimmed = dashboardFilter.type === 'genre' && !isSelected;
+                                  return (
+                                    <div
+                                      key={item.genre}
+                                      className={`${item.color} relative flex flex-col items-center justify-center p-2 transition-all cursor-pointer group rounded-md ${isSelected ? 'ring-2 ring-white ring-offset-2 ring-offset-background' : ''} ${isDimmed ? 'opacity-30' : ''}`}
+                                      style={{ width: `${width}%` }}
+                                      title={`${item.genre}: ${item.percentage}%`}
+                                      onClick={() => toggleFilter('genre', item.genre)}
+                                    >
+                                      <span className="text-white font-bold text-lg drop-shadow-md">{item.genre}</span>
+                                      <span className="text-white/90 text-sm font-medium">{item.percentage}%</span>
+                                      {/* Hover overlay */}
+                                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-all rounded-md" />
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                              
+                              {/* Row 2: Middle genres (3-5) */}
+                              {treemapData.length > 2 && (
+                                <div className="flex h-[30%] gap-1">
+                                  {treemapData.slice(2, 5).map((item, idx) => {
+                                    const rowItems = treemapData.slice(2, 5);
+                                    const rowTotal = rowItems.reduce((sum, g) => sum + g.percentage, 0);
+                                    const width = (item.percentage / rowTotal) * 100;
+                                    const isSelected = isFilterActive('genre', item.genre);
+                                    const isDimmed = dashboardFilter.type === 'genre' && !isSelected;
+                                    return (
+                                      <div
+                                        key={item.genre}
+                                        className={`${item.color} relative flex flex-col items-center justify-center p-1 transition-all cursor-pointer group rounded-md ${isSelected ? 'ring-2 ring-white ring-offset-2 ring-offset-background' : ''} ${isDimmed ? 'opacity-30' : ''}`}
+                                        style={{ width: `${width}%` }}
+                                        title={`${item.genre}: ${item.percentage}%`}
+                                        onClick={() => toggleFilter('genre', item.genre)}
+                                      >
+                                        <span className="text-white font-semibold text-sm drop-shadow-md truncate max-w-full px-1">{item.genre}</span>
+                                        <span className="text-white/90 text-xs">{item.percentage}%</span>
+                                        {/* Hover overlay */}
+                                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-all rounded-md" />
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+
+                              {/* Row 3: Bottom genres (6-8) */}
+                              {treemapData.length > 5 && (
+                                <div className="flex h-[20%] gap-1">
+                                  {treemapData.slice(5, 8).map((item, idx) => {
+                                    const rowItems = treemapData.slice(5, 8);
+                                    const rowTotal = rowItems.reduce((sum, g) => sum + g.percentage, 0);
+                                    const width = (item.percentage / rowTotal) * 100;
+                                    const isSelected = isFilterActive('genre', item.genre);
+                                    const isDimmed = dashboardFilter.type === 'genre' && !isSelected;
+                                    return (
+                                      <div
+                                        key={item.genre}
+                                        className={`${item.color} relative flex flex-col items-center justify-center p-1 transition-all cursor-pointer group rounded-md ${isSelected ? 'ring-2 ring-white ring-offset-2 ring-offset-background' : ''} ${isDimmed ? 'opacity-30' : ''}`}
+                                        style={{ width: `${width}%` }}
+                                        title={`${item.genre}: ${item.percentage}%`}
+                                        onClick={() => toggleFilter('genre', item.genre)}
+                                      >
+                                        <span className="text-white font-medium text-xs drop-shadow-md truncate max-w-full px-1">{item.genre}</span>
+                                        <span className="text-white/80 text-[10px]">{item.percentage}%</span>
+                                        {/* Hover overlay */}
+                                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-all rounded-md" />
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Legend */}
+                            <div className="flex flex-wrap gap-2 justify-center pt-1">
+                              {treemapData.slice(0, 8).map((item) => {
+                                const isSelected = isFilterActive('genre', item.genre);
+                                const isDimmed = dashboardFilter.type === 'genre' && !isSelected;
+                                return (
+                                  <div 
+                                    key={item.genre} 
+                                    className={`flex items-center gap-1.5 cursor-pointer p-1 rounded transition-all ${isSelected ? 'bg-muted ring-1 ring-primary/50' : 'hover:bg-muted/50'} ${isDimmed ? 'opacity-30' : ''}`}
+                                    onClick={() => toggleFilter('genre', item.genre)}
+                                  >
+                                    <div className={`w-3 h-3 rounded-sm ${item.color.split(' ')[0]}`} />
+                                    <span className="text-xs text-muted-foreground">{item.genre}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </CardContent>
                   </Card>
                 )}
