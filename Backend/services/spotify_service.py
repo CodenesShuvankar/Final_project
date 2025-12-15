@@ -153,19 +153,30 @@ class SpotifyService:
         
         return tracks
     
-    def get_general_recommendations(self, limit: int = 20) -> List[Dict]:
+    def get_general_recommendations(self, limit: int = 20, languages: List[str] = None) -> List[Dict]:
         """
         Get general music recommendations for home page
         
         Args:
             limit: Maximum number of recommendations
+            languages: List of preferred languages (e.g., ['bengali', 'hindi'])
             
         Returns:
             List of recommended track information
         """
         try:
-            # Search for popular/trending songs
-            query = "top hits 2024"
+            # Base search for popular songs
+            base_query = "top hits 2024"
+            
+            # Add language preference if provided
+            if languages and len(languages) > 0:
+                primary_language = languages[0].lower()
+                query = f"{base_query} {primary_language}"
+                logger.info(f"Searching for general recommendations with language '{primary_language}': '{query}'")
+            else:
+                query = base_query
+                logger.info(f"Searching for general recommendations: '{query}'")
+            
             response_data = self._make_request(query, limit)
             tracks = self._parse_tracks(response_data)
             
@@ -176,13 +187,14 @@ class SpotifyService:
             logger.error(f"Error getting general recommendations: {e}")
             raise
     
-    def get_mood_recommendations(self, mood: str, limit: int = 20) -> List[Dict]:
+    def get_mood_recommendations(self, mood: str, limit: int = 20, languages: List[str] = None) -> List[Dict]:
         """
-        Get music recommendations based on detected mood/emotion
+        Get music recommendations based on detected mood/emotion and language preferences
         
         Args:
             mood: Detected emotion (e.g., 'happy', 'sad', 'angry')
             limit: Maximum number of recommendations
+            languages: List of preferred languages (e.g., ['hindi', 'english'])
             
         Returns:
             List of recommended track information
@@ -190,10 +202,18 @@ class SpotifyService:
         try:
             mood_lower = mood.lower()
             
-            # Get search query for this mood
-            query = self.EMOTION_TO_QUERY.get(mood_lower, f"{mood} songs")
+            # Get base search query for this mood
+            base_query = self.EMOTION_TO_QUERY.get(mood_lower, f"{mood} songs")
             
-            logger.info(f"Searching for mood '{mood}' with query: '{query}'")
+            # Add language preference to query if provided
+            if languages and len(languages) > 0:
+                # Take the first preferred language
+                primary_language = languages[0].lower()
+                query = f"{base_query} {primary_language}"
+                logger.info(f"Searching for mood '{mood}' with language '{primary_language}': '{query}'")
+            else:
+                query = base_query
+                logger.info(f"Searching for mood '{mood}' with query: '{query}'")
             
             response_data = self._make_request(query, limit)
             tracks = self._parse_tracks(response_data, mood)

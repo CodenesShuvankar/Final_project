@@ -6,7 +6,8 @@ interface AutoMoodDetectionResult {
   mood?: string
   confidence?: number
   detection?: MoodDetection
-  audioBlob?: Blob
+  recommendations?: any[]
+  error?: string
 }
 
 export type { AutoMoodDetectionResult }
@@ -46,13 +47,25 @@ class AutoMoodDetectionServiceImpl {
     return elapsed < DETECTION_COOLDOWN_MINUTES * 60 * 1000
   }
 
+  /**
+   * Auto detect mood using 5-second video recording (matching MoodDetectorPanelMediaPipe)
+   * 
+   * FALLBACK HIERARCHY (Test Cases):
+   * 1. Try video + audio (ideal multimodal detection)
+   * 2. TEST CASE 2: If mic broken/missing → Try video-only (silent video for face detection)
+   * 3. TEST CASE 1: If camera broken/missing → Try audio-only (voice emotion detection)
+   * 4. TEST CASE 3: If both broken/missing → Fail with descriptive error message
+   * 
+   * Error Types Handled:
+   * - NotAllowedError: Permission denied
+   * - NotFoundError: Hardware not detected
+   * - NotReadableError: Device in use by another app
+   */
   async autoDetectMood(): Promise<AutoMoodDetectionResult> {
     let stream: MediaStream | null = null;
-    let hasVideo = false;
-    let hasAudio = false;
 
     try {
-      console.log('🎯 Starting real mood detection with camera and voice...');
+      console.log('🎯 Starting auto mood detection (5-second video recording)...');
       console.log('📍 Step 1: Checking browser support...');
       
       // Check if mediaDevices is supported
@@ -64,20 +77,16 @@ class AutoMoodDetectionServiceImpl {
       console.log('✅ Browser supports media devices');
       console.log('📍 Step 2: Requesting camera and microphone access...');
       
-      // Try to get both video and audio first
+      // Try to get both video and audio (matching MoodDetectorPanelMediaPipe)
       try {
         stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { facingMode: 'user', width: 640, height: 480 }, 
-          audio: {
-            sampleRate: 16000,
-            channelCount: 1,
-            echoCancellation: true,
-            noiseSuppression: true
-          }
+          video: { 
+            facingMode: 'user',
+            width: { ideal: 1280 }, 
+            height: { ideal: 720 } 
+          },
+          audio: true
         });
-        
-        hasVideo = stream.getVideoTracks().length > 0;
-        hasAudio = stream.getAudioTracks().length > 0;
         
         console.log('✅ Camera and microphone access granted');
         console.log('📹 Stream tracks:', stream.getTracks().map(t => `${t.kind}: ${t.label}`));
@@ -85,39 +94,57 @@ class AutoMoodDetectionServiceImpl {
         console.warn('⚠️ Failed to get both video and audio:', error.message);
         console.warn('Error name:', error.name);
         
-        // If microphone is denied/unavailable, try video-only first
-        // This is the most common scenario when user denies mic permission
+        // Test Case 2: If microphone fails, try video-only mode (silent video)
         try {
-          console.log('📍 Step 2b: Trying video-only (microphone denied/unavailable)...');
+          console.log('📍 Step 2b: Trying video-only mode (microphone broken/missing)...');
+          console.log('   → Will capture silent video for face-based mood detection');
           stream = await navigator.mediaDevices.getUserMedia({ 
-            video: { facingMode: 'user', width: 640, height: 480 }
+            video: { 
+              facingMode: 'user',
+              width: { ideal: 1280 }, 
+              height: { ideal: 720 } 
+            },
+            audio: false
           });
-          hasVideo = true;
-          hasAudio = false;
           console.log('✅ Camera access granted (video-only mode)');
           console.log('📹 Video track:', stream.getVideoTracks()[0]?.label || 'unknown');
+          console.log('🎬 Will record 5-second silent video for face expression analysis');
         } catch (videoError: any) {
-          console.warn('⚠️ Failed to get video:', videoError.message);
+          console.warn('⚠️ Camera also unavailable:', videoError.message);
           
-          // Last resort: Try audio only (camera also failed)
+          // Test Case 1: Camera failed, try audio-only mode
           try {
-            console.log('📍 Step 2c: Trying audio-only (camera also unavailable)...');
+            console.log('📍 Step 2c: Trying audio-only mode (camera broken/missing)...');
+            console.log('   → Will use voice-only mood detection');
             stream = await navigator.mediaDevices.getUserMedia({ 
-              audio: {
-                sampleRate: 16000,
-                channelCount: 1,
-                echoCancellation: true,
-                noiseSuppression: true
-              }
+              audio: true
             });
-            hasAudio = true;
-            hasVideo = false;
             console.log('✅ Microphone access granted (audio-only mode)');
+            console.log('🎙️ Will record 5-second audio for voice emotion analysis');
           } catch (audioError: any) {
-            console.error('❌ Failed to get any media devices');
-            console.error('Video error:', videoError.message);
-            console.error('Audio error:', audioError.message);
-            throw new Error('Camera and microphone access denied. Please allow permissions in browser settings.');
+            // Test Case 3: Both devices failed
+            console.error('❌ BOTH camera and microphone unavailable');
+            console.error('   Camera error:', videoError.message, `(${videoError.name})`);
+            console.error('   Audio error:', audioError.message, `(${audioError.name})`);
+            
+            // Determine if it's a permission issue or hardware issue
+            const isPermissionError = 
+              error.name === 'NotAllowedError' || 
+              videoError.name === 'NotAllowedError' || 
+              audioError.name === 'NotAllowedError';
+            
+            const isHardwareError = 
+              error.name === 'NotFoundError' || 
+              videoError.name === 'NotFoundError' || 
+              audioError.name === 'NotFoundError';
+            
+            if (isPermissionError) {
+              throw new Error('Unable to run auto mood detection: Camera and microphone permissions denied. Please allow access in your browser settings.');
+            } else if (isHardwareError) {
+              throw new Error('Unable to run auto mood detection: No camera or microphone detected. Please connect at least one device.');
+            } else {
+              throw new Error('Unable to run auto mood detection: Both camera and microphone are unavailable. They may be in use by another application.');
+            }
           }
         }
       }
@@ -126,119 +153,83 @@ class AutoMoodDetectionServiceImpl {
         throw new Error('Failed to access any media devices');
       }
 
-      console.log(`📊 Detection mode: ${hasVideo && hasAudio ? 'Video + Audio' : hasVideo ? 'Video only' : 'Audio only'}`);
+      const hasVideo = stream.getVideoTracks().length > 0;
+      const hasAudio = stream.getAudioTracks().length > 0;
       
-      let imageBlob: Blob | null = null;
-      let audioBlob: Blob | null = null;
-
-      // Capture image if video is available
+      // Log which test case/mode we're in
+      if (hasVideo && hasAudio) {
+        console.log('📊 Recording mode: Video + Audio (Full multimodal detection)');
+      } else if (hasVideo && !hasAudio) {
+        console.log('📊 Recording mode: Video only (TEST CASE 2: Mic broken/missing → Silent video for face detection)');
+      } else if (!hasVideo && hasAudio) {
+        console.log('📊 Recording mode: Audio only (TEST CASE 1: Camera broken/missing → Voice-only detection)');
+      }
+      
+      // Record video/audio (5 seconds) - matching MoodDetectorPanelMediaPipe
+      console.log('🎬 Recording 5 seconds...');
+      
+      const chunks: Blob[] = [];
+      let mediaRecorder: MediaRecorder;
+      
+      // Use appropriate MIME type based on available tracks
       if (hasVideo) {
-        console.log('📸 Capturing image from camera...');
-        const video = document.createElement('video');
-        video.style.display = 'none';
-        video.srcObject = stream;
-        video.muted = true;
-        video.playsInline = true;
-        document.body.appendChild(video);
-        
-        await video.play();
-        
-        // Wait a bit for camera to adjust
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        // Capture image frame
-        const canvas = document.createElement('canvas');
-        canvas.width = video.videoWidth || 640;
-        canvas.height = video.videoHeight || 480;
-        const ctx = canvas.getContext('2d');
-        
-        if (ctx && video.videoWidth > 0) {
-          ctx.drawImage(video, 0, 0);
-          imageBlob = await new Promise<Blob | null>((resolve) => {
-            canvas.toBlob(resolve, 'image/jpeg', 0.95);
-          });
-          console.log('✅ Image captured successfully');
-        } else {
-          console.warn('⚠️ Could not capture image (no video data)');
+        const options = MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus') 
+          ? { mimeType: 'video/webm;codecs=vp8,opus' } 
+          : {};
+        try {
+          mediaRecorder = new MediaRecorder(stream, options);
+        } catch (e) {
+          mediaRecorder = new MediaRecorder(stream);
         }
-        
-        // Cleanup video element
-        stream.getVideoTracks().forEach(track => track.stop());
-        document.body.removeChild(video);
+      } else {
+        // Audio-only
+        const options = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+          ? { mimeType: 'audio/webm;codecs=opus' }
+          : {};
+        try {
+          mediaRecorder = new MediaRecorder(stream, options);
+        } catch (e) {
+          mediaRecorder = new MediaRecorder(stream);
+        }
       }
       
-      // Record audio if available
-      if (hasAudio) {
-        console.log('🎙️ Recording audio for 10 seconds...');
-        const mediaRecorder = new MediaRecorder(stream);
-        const audioChunks: Blob[] = [];
+      const recordingPromise = new Promise<Blob>((resolve) => {
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) {
+            chunks.push(event.data);
+          }
+        };
+        
+        mediaRecorder.onstop = () => {
+          const mimeType = hasVideo ? 'video/webm' : 'audio/webm';
+          const blob = new Blob(chunks, { type: mimeType });
+          console.log(`✅ Recording complete: ${blob.size}B (${blob.type})`);
+          resolve(blob);
+        };
+      });
       
-        const audioPromise = new Promise<Blob>((resolve) => {
-          mediaRecorder.ondataavailable = (event) => {
-            if (event.data.size > 0) {
-              audioChunks.push(event.data);
-            }
-          };
-          
-          mediaRecorder.onstop = async () => {
-            const webmBlob = new Blob(audioChunks, { type: 'audio/webm' });
-            
-            try {
-              // Convert to WAV
-              const wavBlob = await this.convertToWav(webmBlob);
-              resolve(wavBlob);
-            } catch (error) {
-              console.error('Failed to convert audio:', error);
-              resolve(webmBlob); // Fallback to webm
-            }
-          };
-        });
-        
-        mediaRecorder.start();
-        
-        // Record for 10 seconds
-        await new Promise(resolve => setTimeout(resolve, 10000));
-        
-        mediaRecorder.stop();
-        audioBlob = await audioPromise;
-        
-        console.log('✅ Audio recorded');
-      }
+      mediaRecorder.start(1000); // Collect data every second
       
-      // Stop all remaining tracks
+      // Record for 5 seconds
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      
+      mediaRecorder.stop();
+      const recordedBlob = await recordingPromise;
+      
+      // Stop all tracks
       stream.getTracks().forEach(track => track.stop());
       
-      // Validate we have at least one modality
-      if (!imageBlob && !audioBlob) {
-        throw new Error('Failed to capture any media (no image and no audio)');
-      }
-      
-      console.log('✅ Media captured successfully');
-      console.log(`📊 Captured: ${imageBlob ? '✓ Image' : '✗ Image'}, ${audioBlob ? '✓ Audio' : '✗ Audio'}`);
-      
-      // Send to backend for analysis
-      console.log('🤖 Analyzing mood...');
+      // Send to backend for analysis (matching MoodDetectorPanelMediaPipe approach)
+      console.log('🤖 Analyzing recorded media...');
       
       let result;
       
-      // Choose appropriate analysis method based on available media
-      if (imageBlob && audioBlob) {
-        console.log('📤 Sending multimodal data (audio + image)');
-        console.log(`   - Audio: ${audioBlob.size}B (${audioBlob.type})`);
-        console.log(`   - Image: ${imageBlob.size}B (${imageBlob.type})`);
-        result = await this.voiceService.analyzeMultimodal(audioBlob, imageBlob, 10);
-      } else if (audioBlob) {
-        console.log('📤 Sending audio-only data');
-        console.log(`   - Audio: ${audioBlob.size}B (${audioBlob.type})`);
-        result = await this.voiceService.analyzeAudio(audioBlob);
-      } else if (imageBlob) {
-        console.log('📤 Sending image-only data for face detection');
-        console.log(`   - Image: ${imageBlob.size}B (${imageBlob.type})`);
-        // Create a silent video with just the image for face-only analysis
-        // The backend will detect no audio stream and use face-only mode
-        result = await this.createSilentVideoAndAnalyze(imageBlob);
+      if (hasVideo) {
+        console.log('📤 Sending video for analysis');
+        result = await this.voiceService.analyzeVideo(recordedBlob, 5);
       } else {
-        throw new Error('No media available for analysis');
+        console.log('📤 Sending audio for analysis');
+        result = await this.voiceService.analyzeAudio(recordedBlob);
       }
       
       console.log('📥 Analysis result:', result);
@@ -262,7 +253,7 @@ class AutoMoodDetectionServiceImpl {
         source: 'auto'
       };
 
-      // Store the detection for other components to consume
+      // Store the detection and recommendations for other components to consume
       if (typeof window !== "undefined") {
         window.localStorage.setItem(
           "detected_mood",
@@ -271,8 +262,22 @@ class AutoMoodDetectionServiceImpl {
             confidence: detection.confidence,
             timestamp: detection.timestamp,
             source: detection.source,
+            analysis: result.analysis
           }),
-        )
+        );
+        
+        // Store recommendations if available
+        if (result.recommendations && result.recommendations.length > 0) {
+          window.localStorage.setItem(
+            "mood_recommendations",
+            JSON.stringify({
+              tracks: result.recommendations,
+              mood: detection.mood,
+              timestamp: detection.timestamp
+            })
+          );
+          console.log(`🎵 Stored ${result.recommendations.length} music recommendations`);
+        }
       }
 
       console.log(`✅ Auto mood detection complete: ${detection.mood} (${(detection.confidence * 100).toFixed(1)}%)`);
@@ -282,7 +287,7 @@ class AutoMoodDetectionServiceImpl {
         mood: detection.mood,
         confidence: detection.confidence,
         detection,
-        audioBlob: audioBlob || undefined
+        recommendations: result.recommendations
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -314,141 +319,6 @@ class AutoMoodDetectionServiceImpl {
         error: userMessage
       }
     }
-  }
-
-  /**
-   * Create a silent video from a single image frame for face-only analysis
-   */
-  private async createSilentVideoAndAnalyze(imageBlob: Blob): Promise<any> {
-    try {
-      // Create a video element with the image
-      const img = new Image();
-      const imageUrl = URL.createObjectURL(imageBlob);
-      
-      await new Promise((resolve, reject) => {
-        img.onload = resolve;
-        img.onerror = reject;
-        img.src = imageUrl;
-      });
-      
-      // Create canvas and draw the image
-      const canvas = document.createElement('canvas');
-      canvas.width = img.width;
-      canvas.height = img.height;
-      const ctx = canvas.getContext('2d');
-      
-      if (!ctx) {
-        throw new Error('Failed to get canvas context');
-      }
-      
-      // Create a 5-second silent video with multiple frames
-      // Note: canvas.captureStream() only captures changes, so we need to continuously redraw
-      const stream = canvas.captureStream(15); // 15 fps
-      const mediaRecorder = new MediaRecorder(stream, { 
-        mimeType: 'video/webm;codecs=vp8',
-        videoBitsPerSecond: 2500000
-      });
-      
-      const chunks: Blob[] = [];
-      
-      const videoPromise = new Promise<Blob>((resolve) => {
-        mediaRecorder.ondataavailable = (event) => {
-          if (event.data.size > 0) {
-            chunks.push(event.data);
-          }
-        };
-        
-        mediaRecorder.onstop = () => {
-          const videoBlob = new Blob(chunks, { type: 'video/webm' });
-          resolve(videoBlob);
-        };
-      });
-      
-      // Start recording with data chunks every 500ms
-      mediaRecorder.start(500);
-      
-      // Keep redrawing the image to generate frames (15 fps = ~67ms per frame)
-      const frameInterval = 1000 / 15;
-      const drawFrame = () => {
-        ctx.drawImage(img, 0, 0);
-      };
-      
-      // Draw initial frame
-      drawFrame();
-      
-      // Continue drawing frames for 5 seconds
-      const intervalId = setInterval(drawFrame, frameInterval);
-      
-      // Record for 5 seconds
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      
-      clearInterval(intervalId);
-      
-      // Request final data chunk before stopping
-      mediaRecorder.requestData();
-      
-      // Small delay to ensure final chunk is captured
-      await new Promise(resolve => setTimeout(resolve, 100));
-      
-      mediaRecorder.stop();
-      const videoBlob = await videoPromise;
-      
-      URL.revokeObjectURL(imageUrl);
-      
-      console.log('✅ Created silent video from image:', videoBlob.size, 'bytes');
-      
-      // Send silent video to backend (will be detected as face-only)
-      return await this.voiceService.analyzeVideo(videoBlob, 10);
-      
-    } catch (error) {
-      console.error('Failed to create silent video:', error);
-      throw new Error('Failed to process image for face analysis');
-    }
-  }
-
-  /**
-   * Convert audio to WAV format
-   */
-  private async convertToWav(audioBlob: Blob): Promise<Blob> {
-    const arrayBuffer = await audioBlob.arrayBuffer();
-    const audioContext = new AudioContext({ sampleRate: 16000 });
-    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-    
-    const channelData = audioBuffer.getChannelData(0);
-    const samples = channelData.length;
-    const sampleRate = audioBuffer.sampleRate;
-    
-    const buffer = new ArrayBuffer(44 + samples * 2);
-    const view = new DataView(buffer);
-    
-    const writeString = (offset: number, string: string) => {
-      for (let i = 0; i < string.length; i++) {
-        view.setUint8(offset + i, string.charCodeAt(i));
-      }
-    };
-    
-    writeString(0, 'RIFF');
-    view.setUint32(4, 36 + samples * 2, true);
-    writeString(8, 'WAVE');
-    writeString(12, 'fmt ');
-    view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true);
-    view.setUint16(22, 1, true);
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, sampleRate * 2, true);
-    view.setUint16(32, 2, true);
-    view.setUint16(34, 16, true);
-    writeString(36, 'data');
-    view.setUint32(40, samples * 2, true);
-    
-    let offset = 44;
-    for (let i = 0; i < samples; i++) {
-      const sample = Math.max(-1, Math.min(1, channelData[i]));
-      view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
-      offset += 2;
-    }
-    
-    return new Blob([buffer], { type: 'audio/wav' });
   }
 }
 

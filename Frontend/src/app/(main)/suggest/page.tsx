@@ -31,23 +31,142 @@ export default function SuggestPage() {
 
   const suggestService = SuggestService.getInstance();
 
-  // Load stored mood on mount
+  // Load stored mood and cached recommendations on mount
   useEffect(() => {
-    const storedMood = localStorage.getItem('detected_mood');
-    if (storedMood) {
-      try {
-        const parsedMood = JSON.parse(storedMood);
-        setMood({
-          ...parsedMood,
-          timestamp: new Date(parsedMood.timestamp),
-        });
-        console.log('[SuggestPage] Loaded stored mood from localStorage:', parsedMood);
-      } catch (error) {
-        console.error('Failed to parse stored mood:', error);
+    const loadCachedData = () => {
+      // Load mood
+      const storedMood = localStorage.getItem('detected_mood');
+      let currentMood: string | null = null;
+      
+      if (storedMood) {
+        try {
+          const parsedMood = JSON.parse(storedMood);
+          const moodTimestamp = parsedMood.timestamp ? new Date(parsedMood.timestamp).getTime() : 0;
+          const age = Date.now() - moodTimestamp;
+          
+          // Only use mood if less than 15 minutes old
+          if (age < 15 * 60 * 1000) {
+            currentMood = parsedMood.mood;
+            setMood({
+              ...parsedMood,
+              timestamp: new Date(parsedMood.timestamp),
+            });
+            console.log('[SuggestPage] Loaded stored mood:', parsedMood);
+          } else {
+            console.log('[SuggestPage] Stored mood is too old, ignoring');
+          }
+        } catch (error) {
+          console.error('Failed to parse stored mood:', error);
+        }
       }
-    } else {
-      console.log('[SuggestPage] No stored mood found in localStorage');
-    }
+
+      // Load cached recommendations
+      const moods = ['happy', 'sad', 'energetic', 'angry', 'neutral', 'calm'];
+      let foundCache = false;
+      
+      // Try to load cache for current mood first
+      if (currentMood) {
+        const cachedKey = `cached_recommendations_${currentMood}`;
+        const cached = localStorage.getItem(cachedKey);
+        
+        if (cached) {
+          try {
+            const { tracks, timestamp } = JSON.parse(cached);
+            const age = Date.now() - timestamp;
+            
+            if (age < 30 * 60 * 1000 && tracks && tracks.length > 0) {
+              // Convert Spotify tracks to SuggestResult format
+              const suggestResults = tracks.map((track: any) => ({
+                track: {
+                  id: track.id,
+                  title: track.name,
+                  artist: track.artists.join(', '),
+                  album: track.album,
+                  duration: Math.floor(track.duration_ms / 1000),
+                  coverUrl: track.image_url || '',
+                  genre: 'Pop',
+                  mood: [currentMood] as any,
+                  energy: 0.7,
+                  valence: 0.8,
+                  tempo: 120,
+                  year: 2024,
+                  explicit: false,
+                  liked: false,
+                },
+                score: 0.9,
+                reason: `Recommended for ${currentMood} mood`,
+              }));
+              
+              setResults(suggestResults);
+              foundCache = true;
+              console.log(`✅ Loaded ${suggestResults.length} cached recommendations for ${currentMood} mood`);
+            }
+          } catch (error) {
+            console.error('Failed to parse cached recommendations:', error);
+          }
+        }
+      }
+      
+      // If no cache for current mood, try to load any available cache
+      if (!foundCache) {
+        for (const moodName of moods) {
+          const cachedKey = `cached_recommendations_${moodName}`;
+          const cached = localStorage.getItem(cachedKey);
+          
+          if (cached) {
+            try {
+              const { tracks, timestamp } = JSON.parse(cached);
+              const age = Date.now() - timestamp;
+              
+              if (age < 30 * 60 * 1000 && tracks && tracks.length > 0) {
+                const suggestResults = tracks.map((track: any) => ({
+                  track: {
+                    id: track.id,
+                    title: track.name,
+                    artist: track.artists.join(', '),
+                    album: track.album,
+                    duration: Math.floor(track.duration_ms / 1000),
+                    coverUrl: track.image_url || '',
+                    genre: 'Pop',
+                    mood: [moodName] as any,
+                    energy: 0.7,
+                    valence: 0.8,
+                    tempo: 120,
+                    year: 2024,
+                    explicit: false,
+                    liked: false,
+                  },
+                  score: 0.9,
+                  reason: `Recommended for ${moodName} mood`,
+                }));
+                
+                setResults(suggestResults);
+                console.log(`✅ Loaded ${suggestResults.length} cached recommendations for ${moodName} mood`);
+                break;
+              }
+            } catch (error) {
+              console.error('Failed to parse cached recommendations:', error);
+            }
+          }
+        }
+      }
+    };
+
+    loadCachedData();
+
+    // Listen for mood updates
+    const handleMoodUpdate = () => {
+      console.log('[SuggestPage] Mood updated, reloading cached data');
+      loadCachedData();
+    };
+
+    window.addEventListener('moodUpdated', handleMoodUpdate);
+    window.addEventListener('newMoodRecommendations', handleMoodUpdate);
+
+    return () => {
+      window.removeEventListener('moodUpdated', handleMoodUpdate);
+      window.removeEventListener('newMoodRecommendations', handleMoodUpdate);
+    };
   }, []);
 
   const handleGenerateSuggestions = async () => {

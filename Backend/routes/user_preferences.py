@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from middleware.supabase_auth import get_current_user
-from database import supabase
+from database import db
 import logging
 import os
 
@@ -31,38 +31,38 @@ async def get_user_preferences(
     """Get user preferences including interests and profile photo"""
     try:
         user_id = user_data.get('sub')
-        logger.info(f"📖 Fetching preferences for user: {user_id[:8]}...")
         
-        # Query user preferences from Supabase
-        response = supabase.table('user_preferences') \
-            .select('*') \
-            .eq('user_id', user_id) \
-            .execute()
+        # Query user preferences using Prisma (bypasses RLS issues)
+        preferences = await db.userpreference.find_first(
+            where={"user_id": user_id}
+        )
         
-        if not response.data or len(response.data) == 0:
+        if not preferences:
             # Create default preferences if none exist
-            default_prefs = {
-                'user_id': user_id,
-                'theme': 'system',
-                'auto_mood_detection': False,
-                'explicit_content': True,
-                'preferred_genres': [],
-                'language_priorities': ['English']  # Default language
-            }
-            
-            create_response = supabase.table('user_preferences').insert(default_prefs).execute()
-            
-            if create_response.data:
-                logger.info(f"✅ Created default preferences for user {user_id[:8]}")
-                return {
-                    "success": True,
-                    "preferences": create_response.data[0]
+            preferences = await db.userpreference.create(
+                data={
+                    "user_id": user_id,
+                    "theme": "system",
+                    "auto_mood_detection": False,
+                    "explicit_content": True,
+                    "preferred_genres": [],
                 }
+            )
         
-        logger.info(f"✅ Fetched preferences for user {user_id[:8]}")
         return {
             "success": True,
-            "preferences": response.data[0]
+            "preferences": {
+                "id": preferences.id,
+                "user_id": preferences.user_id,
+                "theme": preferences.theme,
+                "auto_mood_detection": preferences.auto_mood_detection,
+                "explicit_content": preferences.explicit_content,
+                "preferred_genres": preferences.preferred_genres or [],
+                "language_priorities": preferences.language_priorities or ["English"],
+                "profile_photo_url": preferences.profile_photo_url,
+                "created_at": preferences.created_at.isoformat(),
+                "updated_at": preferences.updated_at.isoformat(),
+            }
         }
         
     except Exception as e:
@@ -84,33 +84,27 @@ async def update_interests(
         logger.info(f"🎵 Updating interests for user: {user_id[:8]}...")
         logger.info(f"New interests: {request.interests}")
         
-        # Check if preferences exist
-        check_response = supabase.table('user_preferences') \
-            .select('id') \
-            .eq('user_id', user_id) \
-            .execute()
+        # Check if preferences exist using Prisma
+        preferences = await db.userpreference.find_first(
+            where={"user_id": user_id}
+        )
         
-        if not check_response.data or len(check_response.data) == 0:
+        if not preferences:
             # Create new preferences
-            insert_data = {
-                'user_id': user_id,
-                'preferred_genres': request.interests,
-                'theme': 'system',
-                'auto_mood_detection': False,
-                'explicit_content': True
-            }
-            response = supabase.table('user_preferences').insert(insert_data).execute()
+            preferences = await db.userpreference.create(
+                data={
+                    "user_id": user_id,
+                    "preferred_genres": request.interests,
+                    "theme": "system",
+                    "auto_mood_detection": False,
+                    "explicit_content": True
+                }
+            )
         else:
             # Update existing preferences
-            response = supabase.table('user_preferences') \
-                .update({'preferred_genres': request.interests}) \
-                .eq('user_id', user_id) \
-                .execute()
-        
-        if not response.data:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to update interests"
+            preferences = await db.userpreference.update(
+                where={"user_id": user_id},
+                data={"preferred_genres": request.interests}
             )
         
         logger.info(f"✅ Updated interests for user {user_id[:8]}")
@@ -139,34 +133,28 @@ async def update_language_priorities(
         logger.info(f"🌐 Updating language priorities for user: {user_id[:8]}...")
         logger.info(f"New language priorities: {request.language_priorities}")
         
-        # Check if preferences exist
-        check_response = supabase.table('user_preferences') \
-            .select('id') \
-            .eq('user_id', user_id) \
-            .execute()
+        # Check if preferences exist using Prisma
+        preferences = await db.userpreference.find_first(
+            where={"user_id": user_id}
+        )
         
-        if not check_response.data or len(check_response.data) == 0:
+        if not preferences:
             # Create new preferences
-            insert_data = {
-                'user_id': user_id,
-                'language_priorities': request.language_priorities,
-                'theme': 'system',
-                'auto_mood_detection': False,
-                'explicit_content': True,
-                'preferred_genres': []
-            }
-            response = supabase.table('user_preferences').insert(insert_data).execute()
+            preferences = await db.userpreference.create(
+                data={
+                    "user_id": user_id,
+                    "language_priorities": request.language_priorities,
+                    "theme": "system",
+                    "auto_mood_detection": False,
+                    "explicit_content": True,
+                    "preferred_genres": []
+                }
+            )
         else:
             # Update existing preferences
-            response = supabase.table('user_preferences') \
-                .update({'language_priorities': request.language_priorities}) \
-                .eq('user_id', user_id) \
-                .execute()
-        
-        if not response.data:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to update language priorities"
+            preferences = await db.userpreference.update(
+                where={"user_id": user_id},
+                data={"language_priorities": request.language_priorities}
             )
         
         logger.info(f"✅ Updated language priorities for user {user_id[:8]}")

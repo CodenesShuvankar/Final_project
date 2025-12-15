@@ -58,13 +58,6 @@ def verify_supabase_token(token: str) -> Dict[str, Any]:
         if not supabase_jwt_secret:
             raise Exception("SUPABASE_JWT_SECRET not set")
         
-        # First, try to decode without verification to see token content (for debugging)
-        try:
-            unverified = jwt.decode(token, options={"verify_signature": False})
-            logger.info(f"Token payload (unverified): {unverified}")
-        except Exception as e:
-            logger.warning(f"Could not decode token for debugging: {e}")
-        
         # Decode and verify the JWT token
         # Try with audience first, then without if it fails
         try:
@@ -76,7 +69,7 @@ def verify_supabase_token(token: str) -> Dict[str, Any]:
                 options={"verify_aud": True}
             )
         except jwt.InvalidAudienceError:
-            logger.info("Retrying token verification without audience check")
+            # Silently retry without audience check
             decoded = jwt.decode(
                 token,
                 supabase_jwt_secret,

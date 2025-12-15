@@ -58,26 +58,9 @@ export function InlinePlayer({
     console.log('Is authenticated:', isAuthenticated);
     console.log('Is current track:', isCurrentTrack);
     
-    // Track in listening history FIRST (before any early returns)
-    if (isAuthenticated && !isCurrentTrack) {
-      try {
-        console.log('📝 Tracking song in listening history...');
-        const artistNames = Array.isArray(track.artists) ? track.artists.join(', ') : track.artists;
-        const success = await HistoryService.addToHistory(
-          track.id,
-          track.name,
-          artistNames,
-          track.album,
-          track.image_url || undefined,
-          track.external_urls?.spotify,
-          track.duration_ms,
-          false // not completed yet
-        );
-        console.log('✅ History tracked successfully:', success);
-      } catch (error) {
-        console.error('❌ Failed to track listening history:', error);
-      }
-    } else {
+    // Note: Listening history is automatically tracked by playerStore.playTrack()
+    
+    if (true) {
       if (!isAuthenticated) {
         console.log('⚠️ User not authenticated, skipping history tracking');
       }

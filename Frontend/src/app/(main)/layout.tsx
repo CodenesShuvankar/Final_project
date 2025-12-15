@@ -21,6 +21,8 @@ export default function MainLayout({
 }) {
   const [queueOpen, setQueueOpen] = React.useState(false);
   const [isAuthenticated, setIsAuthenticated] = React.useState<boolean | null>(null);
+  const [userName, setUserName] = React.useState<string>('');
+  const [userEmail, setUserEmail] = React.useState<string>('');
   const router = useRouter();
   const pathname = usePathname();
 
@@ -36,6 +38,8 @@ export default function MainLayout({
       if (!session) {
         console.log('🚫 No session found');
         setIsAuthenticated(false);
+        setUserName('');
+        setUserEmail('');
         
         // Redirect to login only if trying to access protected routes
         if (!isPublicRoute) {
@@ -46,6 +50,16 @@ export default function MainLayout({
       }
       
       setIsAuthenticated(true);
+      
+      // Set user information
+      const email = session.user?.email || '';
+      setUserEmail(email);
+      // Extract name from email (before @) or use user metadata
+      const name = session.user?.user_metadata?.full_name || 
+                   session.user?.user_metadata?.name || 
+                   email.split('@')[0] || 
+                   'User';
+      setUserName(name);
     };
 
     checkAuth();
@@ -57,14 +71,25 @@ export default function MainLayout({
       if (event === 'SIGNED_OUT' || !session) {
         console.log('👋 User signed out');
         setIsAuthenticated(false);
+        setUserName('');
+        setUserEmail('');
         
         // Redirect to home page (public) instead of login
         if (!publicRoutes.includes(pathname)) {
           router.replace('/');
         }
-      } else if (event === 'SIGNED_IN') {
+      } else if (event === 'SIGNED_IN' && session) {
         console.log('✅ User signed in');
         setIsAuthenticated(true);
+        
+        // Set user information
+        const email = session.user?.email || '';
+        setUserEmail(email);
+        const name = session.user?.user_metadata?.full_name || 
+                     session.user?.user_metadata?.name || 
+                     email.split('@')[0] || 
+                     'User';
+        setUserName(name);
       }
     });
 
@@ -93,7 +118,11 @@ export default function MainLayout({
 
   return (
     <div className="min-h-screen bg-background">
-      <Sidebar isAuthenticated={isAuthenticated ?? false} />
+      <Sidebar 
+        isAuthenticated={isAuthenticated ?? false} 
+        userName={userName}
+        userEmail={userEmail}
+      />
       <div className="lg:ml-64">
         <Navbar />
         <main id="main-content" className="pb-24 lg:pb-20">

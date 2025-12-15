@@ -171,8 +171,8 @@ export default function ProfilePage() {
     // 1. Add valence to each mood entry
     const moodWithValence = moodHistory.map(m => {
       const moodKey = (m.detected_mood || '').toLowerCase();
-      const valenceFromDb = parseScore((m as any).valence_score);
-      const arousalFromDb = parseScore((m as any).arousal_score);
+      const valenceFromDb = parseScore((m as any).valence);
+      const arousalFromDb = parseScore((m as any).arousal);
       const valence = valenceFromDb ?? (EMOTION_VALENCE[moodKey] ?? 0);
       const arousal = arousalFromDb ?? (EMOTION_AROUSAL[moodKey] ?? 0);
       return {
@@ -443,8 +443,8 @@ export default function ProfilePage() {
         return;
       }
       
-      // Request all mood history (up to 500 records)
-      const url = `${apiUrl}/mood-history?days=30&limit=500`;
+      // Request mood history (up to 100 records for performance)
+      const url = `${apiUrl}/mood-history?days=30&limit=100`;
       console.log('  - Fetching from:', url);
       
       const response = await fetch(url, {
@@ -1734,38 +1734,40 @@ export default function ProfilePage() {
                     </Button>
                   </div>
                 ) : (
-                  <div className="space-y-3">
-                    {history.slice(0, 10).map((entry) => (
-                      <div
-                        key={entry.id}
-                        className="flex items-center gap-4 p-3 rounded-lg hover:bg-accent/50 transition-colors"
-                      >
-                        {entry.image_url && (
-                          <img
-                            src={entry.image_url}
-                            alt={entry.song_name}
-                            className="w-12 h-12 rounded object-cover"
-                          />
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium truncate">{entry.song_name}</p>
-                          <p className="text-sm text-muted-foreground truncate">{entry.artist_name}</p>
-                          <div className="flex items-center gap-2 mt-1 flex-wrap">
-                            <span className="text-xs text-muted-foreground">
-                              {new Date(entry.played_at).toLocaleString()}
-                            </span>
-                            {entry.mood_detected && (
-                              <Badge variant="secondary" className="text-xs">
-                                {getMoodEmoji(entry.mood_detected)} {entry.mood_detected}
-                              </Badge>
-                            )}
+                  <div className="max-h-[600px] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-muted scrollbar-track-transparent">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {history.map((entry) => (
+                        <div
+                          key={entry.id}
+                          className="flex items-center gap-3 p-3 rounded-lg hover:bg-accent/50 transition-colors border border-border/50"
+                        >
+                          {entry.image_url && (
+                            <img
+                              src={entry.image_url}
+                              alt={entry.song_name}
+                              className="w-12 h-12 rounded object-cover flex-shrink-0"
+                            />
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium truncate text-sm">{entry.song_name}</p>
+                            <p className="text-xs text-muted-foreground truncate">{entry.artist_name}</p>
+                            <div className="flex items-center gap-2 mt-1 flex-wrap">
+                              <span className="text-[10px] text-muted-foreground">
+                                {new Date(entry.played_at).toLocaleTimeString()}
+                              </span>
+                              {entry.mood_detected && (
+                                <Badge variant="secondary" className="text-[10px] h-4 px-1.5">
+                                  {getMoodEmoji(entry.mood_detected)} {entry.mood_detected}
+                                </Badge>
+                              )}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
-                    {history.length > 10 && (
-                      <p className="text-xs text-center text-muted-foreground pt-2">
-                        Showing 10 of {history.length} songs
+                      ))}
+                    </div>
+                    {history.length > 20 && (
+                      <p className="text-xs text-center text-muted-foreground pt-3 mt-3 border-t">
+                        Total: {history.length} songs played
                       </p>
                     )}
                   </div>
@@ -1793,44 +1795,46 @@ export default function ProfilePage() {
                     </Button>
                   </div>
                 ) : (
-                  <div className="space-y-3">
-                    {moodHistory.slice(0, 15).map((mood: any) => {
-                      const confidencePercent = Math.round(mood.confidence * 100);
-                      const moodEmojis: Record<string, string> = {
-                        happy: '😊', sad: '😢', angry: '😠', neutral: '😐',
-                        fear: '😨', disgust: '🤢', surprise: '😲', energetic: '⚡', calm: '😌'
-                      };
-                      const moodEmoji = moodEmojis[mood.detected_mood.toLowerCase()] || '😊';
-                      
-                      return (
-                        <div key={mood.id} className="flex items-center gap-3 p-3 rounded-lg bg-muted/50 hover:bg-muted/70 transition-colors">
-                          <div className="text-3xl">{moodEmoji}</div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <p className="font-medium capitalize">{mood.detected_mood}</p>
-                              <Badge variant="outline" className="text-xs">
-                                {confidencePercent}%
-                              </Badge>
-                              <Badge variant="secondary" className="text-xs">
-                                {mood.analysis_type}
-                              </Badge>
-                            </div>
-                            {mood.voice_emotion && mood.face_emotion && (
-                              <p className="text-xs text-muted-foreground mt-1">
-                                🎤 {mood.voice_emotion} ({Math.round(mood.voice_confidence * 100)}%) • 
-                                📷 {mood.face_emotion} ({Math.round(mood.face_confidence * 100)}%)
+                  <div className="max-h-[600px] overflow-y-auto pr-2 scrollbar-thin scrollbar-thumb-muted scrollbar-track-transparent">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                      {moodHistory.map((mood: any) => {
+                        const confidencePercent = Math.round(mood.confidence * 100);
+                        const moodEmojis: Record<string, string> = {
+                          happy: '😊', sad: '😢', angry: '😠', neutral: '😐',
+                          fear: '😨', disgust: '🤢', surprise: '😲', energetic: '⚡', calm: '😌'
+                        };
+                        const moodEmoji = moodEmojis[mood.detected_mood.toLowerCase()] || '😊';
+                        
+                        return (
+                          <div key={mood.id} className="flex items-start gap-3 p-3 rounded-lg bg-muted/50 hover:bg-muted/70 transition-colors border border-border/40">
+                            <div className="text-2xl flex-shrink-0">{moodEmoji}</div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <p className="font-medium capitalize text-sm">{mood.detected_mood}</p>
+                                <Badge variant="outline" className="text-[10px] h-4 px-1.5">
+                                  {confidencePercent}%
+                                </Badge>
+                                <Badge variant="secondary" className="text-[10px] h-4 px-1.5">
+                                  {mood.analysis_type}
+                                </Badge>
+                              </div>
+                              {mood.voice_emotion && mood.face_emotion && (
+                                <p className="text-[10px] text-muted-foreground mt-1">
+                                  🎤 {mood.voice_emotion} ({Math.round(mood.voice_confidence * 100)}%) • 
+                                  📷 {mood.face_emotion} ({Math.round(mood.face_confidence * 100)}%)
+                                </p>
+                              )}
+                              <p className="text-[10px] text-muted-foreground mt-1">
+                                {new Date(mood.created_at).toLocaleString()}
                               </p>
-                            )}
-                            <p className="text-xs text-muted-foreground mt-1">
-                              {new Date(mood.created_at).toLocaleString()}
-                            </p>
+                            </div>
                           </div>
-                        </div>
-                      );
-                    })}
-                    {moodHistory.length > 15 && (
-                      <p className="text-xs text-center text-muted-foreground pt-2">
-                        Showing 15 of {moodHistory.length} detections
+                        );
+                      })}
+                    </div>
+                    {moodHistory.length > 20 && (
+                      <p className="text-xs text-center text-muted-foreground pt-3 mt-3 border-t">
+                        Total: {moodHistory.length} detections
                       </p>
                     )}
                   </div>

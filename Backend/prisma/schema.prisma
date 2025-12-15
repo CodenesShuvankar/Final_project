@@ -156,3 +156,26 @@ model UserPreference {
   @@map("user_preferences")
   @@schema("public")
 }
+
+// =============================================
+// LIKED SONGS MODEL
+// User's liked/favorited songs
+// =============================================
+model LikedSong {
+  id            String   @id @default(dbgenerated("uuid_generate_v4()")) @db.Uuid
+  user_id       String   @map("user_id") @db.Uuid
+  song_id       String   @map("song_id")
+  song_name     String   @map("song_name")
+  artist_name   String   @map("artist_name")
+  album_name    String?  @map("album_name")
+  image_url     String?  @map("image_url")
+  spotify_url   String?  @map("spotify_url")
+  duration_ms   Int?     @map("duration_ms")
+  liked_at      DateTime @default(now()) @map("liked_at")
+  
+  @@index([user_id])
+  @@index([liked_at(sort: Desc)])
+  @@unique([user_id, song_id])
+  @@map("liked_songs")
+  @@schema("public")
+}

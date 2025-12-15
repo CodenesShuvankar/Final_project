@@ -1,13 +1,14 @@
 """
 Liked Songs Routes
-Handles user's liked songs with Supabase direct queries
+Handles user's liked songs with Prisma ORM
 """
 from fastapi import APIRouter, HTTPException, Depends, Form
 from typing import List, Optional
 from pydantic import BaseModel
+from datetime import datetime
 import logging
 from middleware.supabase_auth import get_current_user
-from database import supabase
+from database import db
 
 logger = logging.getLogger(__name__)
 
@@ -46,26 +47,35 @@ async def get_liked_songs(
     user_data: dict = Depends(get_current_user)
 ):
     """
-    Get user's liked songs
+    Get user's liked songs using Prisma
     """
     try:
         user_id = user_data.get('sub')
-        logger.info(f"📖 Fetching liked songs for user: {user_id[:8]}...")
         
-        # Query liked songs from Supabase
-        response = supabase.table('liked_songs') \
-            .select('*') \
-            .eq('user_id', user_id) \
-            .order('liked_at', desc=True) \
-            .limit(limit) \
-            .execute()
+        # Query liked songs using Prisma
+        liked_songs = await db.likedsong.find_many(
+            where={'user_id': user_id},
+            order={'liked_at': 'desc'},
+            take=limit
+        )
         
-        if not response.data:
-            logger.info(f"No liked songs found for user {user_id[:8]}")
+        if not liked_songs:
             return []
         
-        logger.info(f"✅ Found {len(response.data)} liked songs")
-        return response.data
+        # Convert to response format
+        return [
+            LikedSongResponse(
+                song_id=song.song_id,
+                song_name=song.song_name,
+                artist_name=song.artist_name,
+                album_name=song.album_name,
+                image_url=song.image_url,
+                spotify_url=song.spotify_url,
+                duration_ms=song.duration_ms,
+                liked_at=song.liked_at.isoformat()
+            )
+            for song in liked_songs
+        ]
         
     except Exception as e:
         logger.error(f"❌ Error fetching liked songs: {str(e)}")
@@ -84,21 +94,20 @@ async def like_song(
     user_data: dict = Depends(get_current_user)
 ):
     """
-    Add a song to liked songs
+    Add a song to liked songs using Prisma
     """
     try:
         user_id = user_data.get('sub')
-        logger.info(f"❤️ Adding liked song: {song_name} by {artist_name} for user {user_id[:8]}")
         
         # Check if already liked
-        existing = supabase.table('liked_songs') \
-            .select('id') \
-            .eq('user_id', user_id) \
-            .eq('song_id', song_id) \
-            .execute()
+        existing = await db.likedsong.find_first(
+            where={
+                'user_id': user_id,
+                'song_id': song_id
+            }
+        )
         
-        if existing.data and len(existing.data) > 0:
-            logger.info(f"Song {song_id} already liked by user {user_id[:8]}")
+        if existing:
             return {
                 "success": True,
                 "message": "Song already in liked songs",
@@ -106,21 +115,19 @@ async def like_song(
             }
         
         # Insert liked song
-        response = supabase.table('liked_songs').insert({
-            'user_id': user_id,
-            'song_id': song_id,
-            'song_name': song_name,
-            'artist_name': artist_name,
-            'album_name': album_name,
-            'image_url': image_url,
-            'spotify_url': spotify_url,
-            'duration_ms': duration_ms
-        }).execute()
+        await db.likedsong.create(
+            data={
+                'user_id': user_id,
+                'song_id': song_id,
+                'song_name': song_name,
+                'artist_name': artist_name,
+                'album_name': album_name,
+                'image_url': image_url,
+                'spotify_url': spotify_url,
+                'duration_ms': duration_ms
+            }
+        )
         
-        if not response.data:
-            raise HTTPException(status_code=500, detail="Failed to like song")
-        
-        logger.info(f"✅ Song liked successfully: {song_id}")
         return {
             "success": True,
             "message": "Song liked successfully",
@@ -138,20 +145,19 @@ async def unlike_song(
     user_data: dict = Depends(get_current_user)
 ):
     """
-    Remove a song from liked songs
+    Remove a song from liked songs using Prisma
     """
     try:
         user_id = user_data.get('sub')
-        logger.info(f"💔 Unliking song: {song_id} for user {user_id[:8]}")
         
         # Delete liked song
-        response = supabase.table('liked_songs') \
-            .delete() \
-            .eq('user_id', user_id) \
-            .eq('song_id', song_id) \
-            .execute()
+        await db.likedsong.delete_many(
+            where={
+                'user_id': user_id,
+                'song_id': song_id
+            }
+        )
         
-        logger.info(f"✅ Song unliked successfully: {song_id}")
         return {
             "success": True,
             "message": "Song unliked successfully"
@@ -168,17 +174,19 @@ async def check_if_liked(
     user_data: dict = Depends(get_current_user)
 ):
     """
-    Check if a song is liked by the user
+    Check if a song is liked by the user using Prisma
     """
     try:
         user_id = user_data.get('sub')
-        response = supabase.table('liked_songs') \
-            .select('id') \
-            .eq('user_id', user_id) \
-            .eq('song_id', song_id) \
-            .execute()
         
-        is_liked = response.data and len(response.data) > 0
+        liked_song = await db.likedsong.find_first(
+            where={
+                'user_id': user_id,
+                'song_id': song_id
+            }
+        )
+        
+        is_liked = liked_song is not None
         
         return {
             "song_id": song_id,

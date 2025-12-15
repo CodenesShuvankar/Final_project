@@ -7,10 +7,22 @@ import { Loader2 } from 'lucide-react';
 
 /**
  * Auto mood detector component
+ * 
+ * Automatically detects user mood in the background using the same detection logic
+ * as MoodDetectorPanelMediaPipe (MediaPipe + 5-second video recording).
+ * 
  * Runs mood detection:
- * - Once after login (with 3 second delay)
+ * - Once after login (with 3 second delay, checks for fresh mood data first)
  * - Every 30 minutes automatically
  * - Only when user is authenticated
+ * - Only when camera is enabled in user settings
+ * 
+ * Features:
+ * - Silent background recording (5 seconds)
+ * - Shows minimal notification during detection
+ * - Automatically gets music recommendations for detected mood
+ * - Dispatches events for other components to react to mood changes
+ * - Stores mood data and recommendations in localStorage
  */
 
 // Global flags to prevent duplicate detection runs (persists across React remounts)
@@ -22,6 +34,8 @@ export function AutoMoodDetector() {
   const [showNotification, setShowNotification] = useState(false);
   const [detectedMood, setDetectedMood] = useState<string | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [recommendations, setRecommendations] = useState<any[]>([]);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     let intervalId: NodeJS.Timeout | null = null;
@@ -97,11 +111,33 @@ export function AutoMoodDetector() {
           console.log(`✅ Auto-detected mood: ${result.mood} (confidence: ${result.confidence})`);
           console.log('🔔 Updating notification with detected mood');
           
+          // Store recommendations if available
+          if (result.recommendations && result.recommendations.length > 0) {
+            setRecommendations(result.recommendations);
+            console.log(`🎵 Received ${result.recommendations.length} music recommendations`);
+          }
+          
           // Note: Backend automatically stores mood analysis when user is authenticated
           console.log('📝 Mood auto-stored by backend if authenticated');
           
-          // Dispatch custom event to notify other components
-          window.dispatchEvent(new CustomEvent('moodUpdated', { detail: { mood: result.mood } }));
+          // Dispatch custom event to notify other components (including music player)
+          window.dispatchEvent(new CustomEvent('moodUpdated', { 
+            detail: { 
+              mood: result.mood,
+              recommendations: result.recommendations || []
+            } 
+          }));
+          
+          // Also dispatch event specifically for new recommendations
+          if (result.recommendations && result.recommendations.length > 0) {
+            window.dispatchEvent(new CustomEvent('newMoodRecommendations', {
+              detail: {
+                mood: result.mood,
+                tracks: result.recommendations
+              }
+            }));
+            console.log('🎵 Dispatched newMoodRecommendations event');
+          }
           
           // Hide notification after 8 seconds
           setTimeout(() => {
@@ -109,27 +145,25 @@ export function AutoMoodDetector() {
             setShowNotification(false);
           }, 8000);
         } else {
-          // Detection failed
+          // Detection failed (TEST CASE 3: Both camera and mic unavailable)
           console.error('❌ Auto mood detection failed');
           console.error('Detection result:', result);
-          console.log('💡 Possible reasons:');
-          console.log('  - Camera/Microphone permission denied');
-          console.log('  - Camera/Microphone not available or in use by another app');
-          console.log('  - Browser doesn\'t support media devices');
-          console.log('  - Video/audio recording failed');
-          console.log('💡 To fix: Allow camera/microphone permissions in your browser settings');
           
           if (result.error) {
             console.error('Error message:', result.error);
+            setErrorMessage(result.error);
+          } else {
+            setErrorMessage('Mood detection failed. Please check camera/microphone permissions.');
           }
           
           setDetectedMood('error');
           
-          // Show error notification for 8 seconds
+          // Show error notification for 10 seconds
           setTimeout(() => {
             console.log('🔕 Hiding error notification');
             setShowNotification(false);
-          }, 8000);
+            setErrorMessage(null);
+          }, 10000);
         }
       } catch (error) {
         console.error('❌ Detection error:', error);
@@ -251,8 +285,8 @@ export function AutoMoodDetector() {
                 <div className="absolute inset-0 h-6 w-6 animate-ping opacity-30 rounded-full bg-primary" />
               </div>
               <div>
-                <p className="text-sm font-semibold">Detecting your mood...</p>
-                <p className="text-xs text-muted-foreground">Analyzing your current state</p>
+                <p className="text-sm font-semibold">Analyzing your mood...</p>
+                <p className="text-xs text-muted-foreground">Recording video (5s) + analyzing emotions</p>
               </div>
             </div>
             <div className="w-full bg-muted rounded-full h-1.5 overflow-hidden">
@@ -267,11 +301,11 @@ export function AutoMoodDetector() {
                 <h2 className="text-xl font-bold text-destructive">
                   Detection Failed
                 </h2>
-                <p className="text-xs text-muted-foreground">Camera/Mic access needed</p>
+                <p className="text-xs text-muted-foreground">Unable to run auto mood detection</p>
               </div>
             </div>
             <p className="text-sm text-muted-foreground">
-              Please allow camera and microphone access in your browser settings to use auto mood detection.
+              {errorMessage || 'Please allow camera and microphone access in your browser settings to use auto mood detection.'}
             </p>
           </>
         ) : (
@@ -293,9 +327,15 @@ export function AutoMoodDetector() {
                 <p className="text-xs text-muted-foreground">Mood detected automatically</p>
               </div>
             </div>
-            <p className="text-sm text-muted-foreground">
-              🎵 Finding perfect songs for your mood...
-            </p>
+            {recommendations.length > 0 ? (
+              <p className="text-sm text-muted-foreground">
+                🎵 Found {recommendations.length} perfect songs for your mood!
+              </p>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                🎵 Finding perfect songs for your mood...
+              </p>
+            )}
           </>
         )}
       </div>

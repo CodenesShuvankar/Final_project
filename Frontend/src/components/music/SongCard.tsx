@@ -91,24 +91,7 @@ export function SongCard({
       // Use player service to play track
       playerService.playTrack(track);
     }
-    
-    // Track in listening history
-    if (isAuthenticated) {
-      try {
-        await HistoryService.addToHistory(
-          track.id,
-          track.title,
-          track.artist,
-          track.album,
-          track.coverUrl,
-          undefined, // spotify_url
-          track.duration ? track.duration * 1000 : undefined,
-          false // not completed yet
-        );
-      } catch (error) {
-        console.error('Failed to track listening history:', error);
-      }
-    }
+    // Note: Listening history is automatically tracked by playerStore.playTrack()
   };
 
   const handleToggleLike = async (e?: React.MouseEvent) => {

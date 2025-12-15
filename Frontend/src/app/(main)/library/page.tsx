@@ -18,8 +18,6 @@ import { Track, Playlist, Artist, Album } from '@/lib/mockData';
 export default function LibraryPage() {
   const [likedSongs, setLikedSongs] = useState<Track[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
-  const [artists, setArtists] = useState<Artist[]>([]);
-  const [albums, setAlbums] = useState<Album[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [newPlaylistName, setNewPlaylistName] = useState('');
@@ -31,17 +29,13 @@ export default function LibraryPage() {
   useEffect(() => {
     const loadLibrary = async () => {
       try {
-        const [likedData, playlistData, artistData, albumData] = await Promise.all([
+        const [likedData, playlistData] = await Promise.all([
           LibraryService.getLikedSongs(),
           LibraryService.getPlaylists(),
-          LibraryService.getFollowedArtists(),
-          LibraryService.getSavedAlbums(),
         ]);
 
         setLikedSongs(likedData);
         setPlaylists(playlistData);
-        setArtists(artistData);
-        setAlbums(albumData);
       } catch (error) {
         console.error('Failed to load library:', error);
       } finally {
@@ -130,7 +124,7 @@ export default function LibraryPage() {
 
       {/* Library Tabs */}
       <Tabs defaultValue="liked" className="w-full">
-        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 max-w-2xl">
+        <TabsList className="grid w-full grid-cols-2 max-w-md">
           <TabsTrigger value="liked" className="gap-1 sm:gap-2 text-xs sm:text-sm">
             <Heart className="h-3 w-3 sm:h-4 sm:w-4" />
             <span className="hidden sm:inline">Liked Songs</span>
@@ -139,14 +133,6 @@ export default function LibraryPage() {
           <TabsTrigger value="playlists" className="gap-1 sm:gap-2 text-xs sm:text-sm">
             <Music className="h-3 w-3 sm:h-4 sm:w-4" />
             Playlists
-          </TabsTrigger>
-          <TabsTrigger value="artists" className="gap-1 sm:gap-2 text-xs sm:text-sm">
-            <Users className="h-3 w-3 sm:h-4 sm:w-4" />
-            Artists
-          </TabsTrigger>
-          <TabsTrigger value="albums" className="gap-1 sm:gap-2 text-xs sm:text-sm">
-            <Clock className="h-3 w-3 sm:h-4 sm:w-4" />
-            Albums
           </TabsTrigger>
         </TabsList>
 
@@ -278,83 +264,7 @@ export default function LibraryPage() {
           </div>
         </TabsContent>
 
-        <TabsContent value="artists" className="mt-6">
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xl font-semibold">Followed Artists</h2>
-              <span className="text-sm text-muted-foreground">
-                {artists.length} artists
-              </span>
-            </div>
-            
-            {artists.length === 0 ? (
-              <div className="text-center py-12">
-                <Users className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                <p className="text-muted-foreground">
-                  No followed artists yet. Discover and follow artists you love!
-                </p>
-              </div>
-            ) : (
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {artists.map((artist: any) => (
-                  <ArtistChip
-                    key={artist.id}
-                    artist={artist}
-                    onPlay={() => console.log('Play artist:', artist.id)}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        </TabsContent>
 
-        <TabsContent value="albums" className="mt-6">
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xl font-semibold">Saved Albums</h2>
-              <span className="text-sm text-muted-foreground">
-                {albums.length} albums
-              </span>
-            </div>
-            
-            {albums.length === 0 ? (
-              <div className="text-center py-12">
-                <Clock className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                <p className="text-muted-foreground">
-                  No saved albums yet. Save albums to easily find them later!
-                </p>
-              </div>
-            ) : (
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                {albums.map((album: any) => (
-                  <div key={album.id} className="group cursor-pointer">
-                    <div className="relative aspect-square rounded-lg overflow-hidden mb-3">
-                      <img
-                        src={album.coverUrl}
-                        alt={album.title}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                      />
-                      <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                        <Button className="h-10 w-10 rounded-full">
-                          <Music className="h-5 w-5" />
-                        </Button>
-                      </div>
-                    </div>
-                    <div>
-                      <h3 className="font-medium truncate">{album.title}</h3>
-                      <p className="text-sm text-muted-foreground truncate">
-                        {album.artist}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {album.year} • {album.trackCount} tracks
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </TabsContent>
       </Tabs>
     </div>
   );

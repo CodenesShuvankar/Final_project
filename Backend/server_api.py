@@ -114,7 +114,7 @@ async def fusion_status():
 # # =============================================
 @app.get("/mood-history")
 async def get_mood_history(
-    limit: int = 500,
+    limit: int = 100,
     days: int = 30,
     authorization: str = Header(None)
 ):
@@ -153,6 +153,8 @@ async def get_mood_history(
                     "face_confidence": mood.face_confidence,
                     "agreement": mood.agreement,
                     "analysis_type": mood.analysis_type,
+                    "valence": float(mood.valence_score) if mood.valence_score else None,
+                    "arousal": float(mood.arousal_score) if mood.arousal_score else None,
                     "created_at": mood.created_at.isoformat() if mood.created_at else None
                 }
                 for mood in mood_history
@@ -350,6 +352,17 @@ async def analyze_video_upload(
                     logger.info("📝 Stored voice-only fallback analysis for video upload")
                 except Exception as db_error:
                     logger.error(f"❌ Failed to store voice-only fallback: {db_error}")
+            
+            # Get user language preferences if authenticated
+            user_languages = None
+            if user_id:
+                try:
+                    user_prefs = await db.userpreference.find_unique(where={'user_id': user_id})
+                    if user_prefs and user_prefs.language_priorities:
+                        user_languages = user_prefs.language_priorities
+                except Exception as e:
+                    logger.warning(f"Could not fetch user preferences: {e}")
+            
             return {
                 "success": True,
                 "mode": "voice-only",
@@ -362,7 +375,7 @@ async def analyze_video_upload(
                     "arousal_score": arousal_score,
                 },
                 "recommendation_emotion": voice_pred["emotion"],
-                "recommendations": spotify_service.get_mood_recommendations(voice_pred["emotion"], limit),
+                "recommendations": spotify_service.get_mood_recommendations(voice_pred["emotion"], limit, user_languages),
                 "recommendation_count": limit
             }
 
@@ -403,6 +416,17 @@ async def analyze_video_upload(
                     logger.info("📝 Stored face-only fallback analysis for video upload")
                 except Exception as db_error:
                     logger.error(f"❌ Failed to store face-only fallback: {db_error}")
+            
+            # Get user language preferences if authenticated
+            user_languages = None
+            if user_id:
+                try:
+                    user_prefs = await db.userpreference.find_unique(where={'user_id': user_id})
+                    if user_prefs and user_prefs.language_priorities:
+                        user_languages = user_prefs.language_priorities
+                except Exception as e:
+                    logger.warning(f"Could not fetch user preferences: {e}")
+            
             return {
                 "success": True,
                 "mode": "face-only",
@@ -415,7 +439,7 @@ async def analyze_video_upload(
                     "arousal_score": arousal_score,
                 },
                 "recommendation_emotion": face_result["emotion"],
-                "recommendations": spotify_service.get_mood_recommendations(face_result["emotion"], limit),
+                "recommendations": spotify_service.get_mood_recommendations(face_result["emotion"], limit, user_languages),
                 "recommendation_count": limit
             }
 
@@ -458,7 +482,18 @@ async def analyze_video_upload(
 
         valence_score, arousal_score = compute_valence_arousal(final_emotion, final_confidence)
 
-        recommendations = spotify_service.get_mood_recommendations(recommendation_emotion, limit)
+        # Get user language preferences if authenticated
+        user_languages = None
+        if user_id:
+            try:
+                user_prefs = await db.userpreference.find_unique(where={'user_id': user_id})
+                if user_prefs and user_prefs.language_priorities:
+                    user_languages = user_prefs.language_priorities
+                    logger.info(f"🌐 Using user language preferences: {user_languages}")
+            except Exception as e:
+                logger.warning(f"Could not fetch user preferences: {e}")
+        
+        recommendations = spotify_service.get_mood_recommendations(recommendation_emotion, limit, user_languages)
 
         if user_id:
             try:
@@ -526,13 +561,30 @@ async def analyze_video_upload(
 #===============================================
 
 @app.get("/recommendations")
-async def get_recommendations(limit: int = 20):
+async def get_recommendations(limit: int = 20, authorization: Optional[str] = Header(None)):
     """
     Get general music recommendations for home page
+    Uses user's language preferences if authenticated
     No mood required - returns popular/trending tracks
     """
     try:
-        recommendations = spotify_service.get_general_recommendations(limit)
+        # Get user language preferences if authenticated
+        user_languages = None
+        if authorization and authorization.startswith("Bearer "):
+            try:
+                token = authorization.split(" ")[1]
+                user_data = verify_supabase_token(token)
+                user_id = user_data.get("sub")
+                
+                # Fetch user preferences
+                user_prefs = await db.userpreference.find_unique(where={'user_id': user_id})
+                if user_prefs and user_prefs.language_priorities:
+                    user_languages = user_prefs.language_priorities
+                    logger.info(f"🌐 Using user language preferences for recommendations: {user_languages}")
+            except Exception as e:
+                logger.warning(f"Could not fetch user preferences: {e}")
+        
+        recommendations = spotify_service.get_general_recommendations(limit, user_languages)
         return {
             "success": True,
             "count": len(recommendations),
@@ -544,18 +596,18 @@ async def get_recommendations(limit: int = 20):
 
 
 @app.get("/recommendations/mood/{mood}")
-async def get_mood_recommendations(mood: str, limit: int = 20, language: str = None):
+async def get_mood_recommendations_endpoint(mood: str, limit: int = 20, language: str = None):
     """
     Get music recommendations based on detected mood/emotion with optional language preference
     
     Supported moods: happy, sad, angry, neutral, fear, disgust, surprise, calm, excited
     
-    Example: /recommendations/mood/happy?limit=20&language=Hindi
+    Example: /recommendations/mood/happy?limit=20&language=hindi
     """
     try:
-        # Combine mood with language for better results
-        search_mood = f"{mood} {language}" if language else mood
-        recommendations = spotify_service.get_mood_recommendations(search_mood, limit)
+        # Pass language as a list to the service
+        languages = [language] if language else None
+        recommendations = spotify_service.get_mood_recommendations(mood, limit, languages)
         return {
             "success": True,
             "mood": mood,
@@ -694,7 +746,18 @@ async def analyze_voice_and_face(
         if has_voice and not has_face:
             voice_pred = voice_result["prediction"]
             recommendation_emotion = voice_pred["emotion"]
-            recommendations = spotify_service.get_mood_recommendations(recommendation_emotion, limit)
+            
+            # Get user language preferences if authenticated
+            user_languages = None
+            if user_id:
+                try:
+                    user_prefs = await db.userpreference.find_unique(where={'user_id': user_id})
+                    if user_prefs and user_prefs.language_priorities:
+                        user_languages = user_prefs.language_priorities
+                except Exception as e:
+                    logger.warning(f"Could not fetch user preferences: {e}")
+            
+            recommendations = spotify_service.get_mood_recommendations(recommendation_emotion, limit, user_languages)
             valence_score, arousal_score = compute_valence_arousal(
                 voice_pred["emotion"], voice_pred["confidence"]
             )
@@ -735,7 +798,18 @@ async def analyze_voice_and_face(
         # Face-only path
         if has_face and not has_voice:
             recommendation_emotion = face_result["emotion"]
-            recommendations = spotify_service.get_mood_recommendations(recommendation_emotion, limit)
+            
+            # Get user language preferences if authenticated
+            user_languages = None
+            if user_id:
+                try:
+                    user_prefs = await db.userpreference.find_unique(where={'user_id': user_id})
+                    if user_prefs and user_prefs.language_priorities:
+                        user_languages = user_prefs.language_priorities
+                except Exception as e:
+                    logger.warning(f"Could not fetch user preferences: {e}")
+            
+            recommendations = spotify_service.get_mood_recommendations(recommendation_emotion, limit, user_languages)
             valence_score, arousal_score = compute_valence_arousal(
                 face_result["emotion"], face_result["confidence"]
             )
@@ -862,10 +936,22 @@ async def analyze_voice_and_face(
 
         valence_score, arousal_score = compute_valence_arousal(final_emotion, final_confidence)
 
+        # Get user language preferences if authenticated
+        user_languages = None
+        if user_id:
+            try:
+                user_prefs = await db.userpreference.find_unique(where={'user_id': user_id})
+                if user_prefs and user_prefs.language_priorities:
+                    user_languages = user_prefs.language_priorities
+                    logger.info(f"🌐 Using user language preferences: {user_languages}")
+            except Exception as e:
+                logger.warning(f"Could not fetch user preferences: {e}")
+
         try:
             recommendations = spotify_service.get_mood_recommendations(
                 recommendation_emotion_final, 
-                limit=limit
+                limit=limit,
+                languages=user_languages
             )
             
             if user_id:
@@ -984,7 +1070,6 @@ async def get_listening_history(
     """Get user's listening history from database"""
     try:
         user_id = user["sub"]
-        logger.info(f"📜 Fetching listening history for user {user_id} (limit: {limit})")
         
         # Fetch from database
         history = await db.listeninghistory.find_many(
@@ -992,8 +1077,6 @@ async def get_listening_history(
             order={"played_at": "desc"},
             take=limit
         )
-        
-        logger.info(f"✅ Fetched {len(history)} listening history records")
         
         return {
             "success": True,

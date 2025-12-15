@@ -14,10 +14,20 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { AuthService } from '@/lib/services/auth';
 
 interface SidebarProps {
   className?: string;
   isAuthenticated: boolean;
+  userName?: string;
+  userEmail?: string;
 }
 
 const navigation = [
@@ -26,14 +36,12 @@ const navigation = [
   { name: 'Your Library', href: '/library', icon: Library, public: false },
 ];
 
-const quickAccess = [
-  { name: 'Liked Songs', href: '/library?tab=liked', icon: Heart },
-];
+
 
 /**
  * Desktop sidebar navigation component
  */
-export function Sidebar({ className, isAuthenticated }: SidebarProps) {
+export function Sidebar({ className, isAuthenticated, userName, userEmail }: SidebarProps) {
   const pathname = usePathname();
 
   const handleProtectedClick = (e: React.MouseEvent<HTMLAnchorElement>, isPublic: boolean) => {
@@ -147,30 +155,53 @@ export function Sidebar({ className, isAuthenticated }: SidebarProps) {
           </Button>
         </div>
         
-        <div className="space-y-1">
-          {quickAccess.map((item) => {
-            const isActive = pathname === item.href;
-            return (
-              <Link
-                key={item.name}
-                href={item.href}
-                onClick={(e) => handleProtectedClick(e, false)}
+        {isAuthenticated && userName && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
                 className={cn(
-                  "flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors focus-ring",
-                  isActive
-                    ? "bg-accent text-accent-foreground"
-                    : !isAuthenticated
-                    ? "text-muted-foreground/50 cursor-not-allowed"
-                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                  "flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors focus-ring w-full text-left",
+                  "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
                 )}
               >
-                <item.icon className="mr-3 h-4 w-4" />
-                {item.name}
-                {!isAuthenticated && <span className="ml-auto text-xs">🔒</span>}
-              </Link>
-            );
-          })}
-        </div>
+                <div className="mr-3 h-8 w-8 bg-primary rounded-full flex items-center justify-center flex-shrink-0">
+                  <User className="h-4 w-4 text-white" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate">{userName}</p>
+                  {userEmail && <p className="text-xs text-muted-foreground truncate">{userEmail}</p>}
+                </div>
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-56">
+              <DropdownMenuItem asChild>
+                <Link href="/profile" className="cursor-pointer">
+                  Profile
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
+                <Link href="/account" className="cursor-pointer">
+                  Account
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem 
+                onClick={async () => {
+                  try {
+                    const authService = AuthService.getInstance();
+                    await authService.logout();
+                    window.location.href = '/';
+                  } catch (error) {
+                    console.error('Logout failed:', error);
+                  }
+                }}
+                className="cursor-pointer"
+              >
+                Log out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
     </aside>
   );

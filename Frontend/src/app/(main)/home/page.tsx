@@ -58,6 +58,10 @@ export default function MainAppPage() {
         // Initialize liked songs cache first to prevent multiple API calls
         await likedSongsService.initializeCache();
         
+        // Clear recently played cache (we always fetch fresh)
+        localStorage.removeItem('cached_recent');
+        console.log('🧹 Cleared recently played cache - always fetch fresh');
+        
         // Load user interests from backend
         const preferences = await loadUserInterests();
         const languages = preferences?.language_priorities || ['English'];
@@ -274,28 +278,9 @@ export default function MainAppPage() {
         await fetchTrending();
       }
 
-      // Check cache for recently played
-      const cachedRecent = localStorage.getItem('cached_recent');
-      if (cachedRecent) {
-        try {
-          const { tracks, timestamp } = JSON.parse(cachedRecent);
-          const age = Date.now() - timestamp;
-          
-          // Use cache if less than 30 minutes old
-          if (age < 30 * 60 * 1000) {
-            console.log('✅ Using cached recent tracks');
-            setRecentlyPlayed(tracks);
-          } else {
-            console.log('⏰ Recent cache expired, fetching new');
-            await fetchRecent();
-          }
-        } catch (error) {
-          console.error('Failed to parse cached recent:', error);
-          await fetchRecent();
-        }
-      } else {
-        await fetchRecent();
-      }
+      // Always fetch fresh recently played (no cache)
+      console.log('🔄 Fetching fresh recently played songs');
+      await fetchRecent();
     };
 
     const fetchTrending = async () => {
@@ -303,7 +288,15 @@ export default function MainAppPage() {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
       
       try {
-        const response = await fetch(`${apiUrl}/recommendations?limit=6`);
+        // Get auth token to use language preferences
+        const { data: { session } } = await supabase.auth.getSession();
+        
+        const headers: Record<string, string> = {};
+        if (session?.access_token) {
+          headers['Authorization'] = `Bearer ${session.access_token}`;
+        }
+        
+        const response = await fetch(`${apiUrl}/recommendations?limit=6`, { headers });
         if (response.ok) {
           const data = await response.json();
           if (data.success && data.recommendations) {
@@ -357,15 +350,11 @@ export default function MainAppPage() {
           const recentResult = await spotifyService.searchMusic('new releases 2024', 6);
           if (recentResult) {
             setRecentlyPlayed(recentResult.tracks);
-            localStorage.setItem('cached_recent', JSON.stringify({
-              tracks: recentResult.tracks,
-              timestamp: Date.now()
-            }));
           }
           return;
         }
         
-        // Fetch from listening history database
+        // Fetch from listening history database (NO CACHE - always fresh)
         const response = await fetch(`${apiUrl}/listening-history?limit=6`, {
           headers: {
             'Authorization': `Bearer ${session.access_token}`
@@ -387,11 +376,7 @@ export default function MainAppPage() {
             }));
             
             setRecentlyPlayed(tracks);
-            localStorage.setItem('cached_recent', JSON.stringify({
-              tracks: tracks,
-              timestamp: Date.now()
-            }));
-            console.log('💾 Cached recent tracks from listening history:', tracks.length);
+            console.log('✅ Loaded fresh recently played tracks:', tracks.length);
             return;
           } else {
             console.log('📭 No listening history found, using fallback');
@@ -402,16 +387,11 @@ export default function MainAppPage() {
       }
       
       // Fallback to search if listening history is empty or fails
-      // Use different search terms than trending section
       console.log('🔄 Using fallback: searching for latest releases');
       const recentResult = await spotifyService.searchMusic('latest hits 2024', 6);
       if (recentResult) {
         setRecentlyPlayed(recentResult.tracks);
-        localStorage.setItem('cached_recent', JSON.stringify({
-          tracks: recentResult.tracks,
-          timestamp: Date.now()
-        }));
-        console.log('💾 Cached fallback recent tracks');
+        console.log('✅ Loaded fallback recent tracks');
       }
     };
 
@@ -477,6 +457,23 @@ export default function MainAppPage() {
     };
     window.addEventListener('moodUpdated', handleCustomMoodUpdate as EventListener);
     
+    // Listen for new mood recommendations from auto-detection
+    const handleNewRecommendations = (event: any) => {
+      console.log('🎵 Received new mood recommendations:', event.detail);
+      if (event.detail?.tracks && event.detail.tracks.length > 0) {
+        setMoodBasedTracks(event.detail.tracks);
+        setDetectedMood(event.detail.mood);
+        
+        // Cache the new recommendations
+        localStorage.setItem(`cached_recommendations_${event.detail.mood}`, JSON.stringify({
+          tracks: event.detail.tracks,
+          timestamp: Date.now()
+        }));
+        console.log('💾 Updated mood recommendations on home page');
+      }
+    };
+    window.addEventListener('newMoodRecommendations', handleNewRecommendations as EventListener);
+    
     // Listen for page visibility changes (user returns to tab)
     const handleVisibilityChange = () => {
       if (!document.hidden) {
@@ -489,6 +486,7 @@ export default function MainAppPage() {
     return () => {
       window.removeEventListener('storage', handleMoodUpdate);
       window.removeEventListener('moodUpdated', handleCustomMoodUpdate);
+      window.removeEventListener('newMoodRecommendations', handleNewRecommendations);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [detectedMood, spotifyService]);
@@ -585,226 +583,291 @@ export default function MainAppPage() {
     trackHistory();
   };
 
+  const moodGenres = [
+    { name: 'Energize', icon: '⚡', color: 'from-orange-500 to-red-500', mood: 'energetic' },
+    { name: 'Feel Good', icon: '😊', color: 'from-yellow-400 to-orange-400', mood: 'happy' },
+    { name: 'Relax', icon: '🌊', color: 'from-blue-400 to-cyan-400', mood: 'calm' },
+    { name: 'Workout', icon: '💪', color: 'from-red-500 to-pink-500', mood: 'energetic' },
+    { name: 'Sad', icon: '😢', color: 'from-gray-500 to-blue-500', mood: 'sad' },
+    { name: 'Party', icon: '🎉', color: 'from-purple-500 to-pink-500', mood: 'happy' },
+    { name: 'Focus', icon: '🎯', color: 'from-indigo-500 to-blue-500', mood: 'calm' },
+    { name: 'Romance', icon: '💕', color: 'from-pink-400 to-rose-400', mood: 'calm' },
+    { name: 'Sleep', icon: '😴', color: 'from-indigo-600 to-purple-600', mood: 'calm' },
+  ];
+
   return (
-    <div className="p-6 space-y-8">
-      {/* Greeting */}
-      <div className="space-y-2">
-        <h1 className="text-3xl font-bold" suppressHydrationWarning>
-          {mounted ? getGreeting() : 'Welcome'}
-        </h1>
-        <p className="text-muted-foreground">
-          Welcome back! Here's what we think you'll love today.
-        </p>
-      </div>
+    <div className="h-full overflow-y-auto">
+      {/* Hero Section with Greeting & Quick Actions */}
+      <div className="relative bg-gradient-to-b from-purple-600/20 via-background to-background px-6 pt-6 pb-12">
+        <div className="max-w-7xl mx-auto">
+          {/* Greeting */}
+          <h1 className="text-4xl md:text-5xl font-bold mb-2" suppressHydrationWarning>
+            {mounted ? getGreeting() : 'Welcome'}
+          </h1>
+          <p className="text-muted-foreground text-lg mb-8">
+            Welcome back! Here's what we think you'll love today.
+          </p>
 
-      {/* Quick Actions */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        <Card className="gradient-bg-purple text-white border-0 shadow-lg hover:shadow-xl transition-shadow">
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="font-semibold mb-2">Discover by Mood</h3>
-                <p className="text-sm opacity-90">
-                  Let AI suggest music based on how you're feeling
-                </p>
-              </div>
-              <Lightbulb className="h-8 w-8 opacity-80" />
-            </div>
-            <Button asChild className="mt-4 bg-white/20 hover:bg-white/30 text-white border-0">
-              <Link href="/suggest">Try Suggest</Link>
-            </Button>
-          </CardContent>
-        </Card>
+          {/* Quick Actions - Featured Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+            <Link href="/suggest">
+              <Card className="group relative overflow-hidden gradient-bg-purple text-white border-0 shadow-xl hover:shadow-2xl transition-all duration-300 cursor-pointer hover:scale-[1.02]">
+                <CardContent className="p-8">
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <h3 className="text-2xl font-bold mb-2 flex items-center gap-2">
+                        <Lightbulb className="h-6 w-6" />
+                        Discover by Mood
+                      </h3>
+                      <p className="text-white/90 text-sm mb-4">
+                        Let AI suggest music based on how you're feeling
+                      </p>
+                      <div className="inline-flex items-center text-sm font-semibold bg-white/20 px-4 py-2 rounded-full backdrop-blur-sm">
+                        Try Suggest →
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </Link>
 
-        <Card className="gradient-bg-mint text-white border-0 shadow-lg hover:shadow-xl transition-shadow">
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="font-semibold mb-2">Mood Detection</h3>
-                <p className="text-sm opacity-90">
-                  Use your camera to detect your current mood
-                </p>
-              </div>
-              <Clock className="h-8 w-8 opacity-80" />
-            </div>
-            <Button asChild className="mt-4 bg-white/20 hover:bg-white/30 text-white border-0">
-              <Link href="/mood">Detect Mood</Link>
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Mood-Based Recommendations - First Section */}
-      <section>
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h2 className="text-2xl font-bold">
-              {detectedMood ? `${detectedMood.charAt(0).toUpperCase() + detectedMood.slice(1)} Vibes` : 'Recommended for You'}
-            </h2>
-            <p className="text-sm text-muted-foreground">
-              {detectedMood ? `Music matching your ${detectedMood} mood` : 'Personalized music recommendations'}
-            </p>
+            <Link href="/mood">
+              <Card className="group relative overflow-hidden gradient-bg-mint text-white border-0 shadow-xl hover:shadow-2xl transition-all duration-300 cursor-pointer hover:scale-[1.02]">
+                <CardContent className="p-8">
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1">
+                      <h3 className="text-2xl font-bold mb-2 flex items-center gap-2">
+                        <Camera className="h-6 w-6" />
+                        Mood Detection
+                      </h3>
+                      <p className="text-white/90 text-sm mb-4">
+                        Use your camera to detect your current mood
+                      </p>
+                      <div className="inline-flex items-center text-sm font-semibold bg-white/20 px-4 py-2 rounded-full backdrop-blur-sm">
+                        Detect Mood →
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </Link>
           </div>
-          <Button variant="ghost" asChild>
-            <Link href="/suggest">Show all</Link>
-          </Button>
-        </div>
-        {isLoading ? (
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-            <span className="ml-2 text-muted-foreground">Loading recommendations...</span>
+
+          {/* Mood Genre Pills */}
+          <div className="flex items-center gap-2 mb-4">
+            <h3 className="text-sm font-semibold text-muted-foreground">Browse by mood</h3>
           </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-            {moodBasedTracks.slice(0, 6).map((track) => (
-              <SongCard
-                key={track.id}
-                track={convertSpotifyTrackToTrack(track)}
-                onPlay={() => handlePlayTrack(track)}
-                showArtist
-              />
+          <div className="flex flex-wrap gap-2">
+            {moodGenres.map((genre) => (
+              <Link key={genre.name} href={`/suggest`}>
+                <button
+                  className={`px-4 py-2 rounded-full text-sm font-medium text-white bg-gradient-to-r ${genre.color} hover:scale-105 transition-transform shadow-lg flex items-center gap-2`}
+                >
+                  <span>{genre.icon}</span>
+                  <span>{genre.name}</span>
+                </button>
+              </Link>
             ))}
           </div>
-        )}
-      </section>
+        </div>
+      </div>
 
-      {/* Interest-Based Recommendations - NEW */}
-      {userInterests.length > 0 && interestBasedTracks.length > 0 && (
+      {/* Main Content */}
+      <div className="px-6 pb-8 max-w-7xl mx-auto space-y-10">
+        {/* Mood-Based Recommendations */}
         <section>
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between mb-6">
             <div>
-              <h2 className="text-2xl font-bold">Based on Your Interests</h2>
-              <p className="text-sm text-muted-foreground">
-                {userInterests.slice(0, 3).join(', ')} {userInterests.length > 3 ? `and ${userInterests.length - 3} more` : ''}
+              <h2 className="text-3xl font-bold">
+                {detectedMood ? `${detectedMood.charAt(0).toUpperCase() + detectedMood.slice(1)} Vibes` : 'Recommended for You'}
+              </h2>
+              <p className="text-sm text-muted-foreground mt-1">
+                {detectedMood ? `Music matching your ${detectedMood} mood` : 'Personalized music recommendations'}
               </p>
             </div>
-            <Button variant="ghost" asChild>
-              <Link href="/account">Edit Interests</Link>
+            <Button variant="ghost" className="font-semibold" asChild>
+              <Link href="/suggest">Show all →</Link>
             </Button>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-4">
-            {interestBasedTracks.map((track) => (
-              <SongCard
-                key={track.id}
-                track={convertSpotifyTrackToTrack(track)}
-                onPlay={() => handlePlayTrack(track)}
-                showArtist
-              />
-            ))}
+          {isLoading ? (
+            <div className="flex items-center justify-center py-16 bg-muted/30 rounded-xl">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              <span className="ml-3 text-muted-foreground">Loading recommendations...</span>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
+              {moodBasedTracks.slice(0, 6).map((track) => (
+                <SongCard
+                  key={track.id}
+                  track={convertSpotifyTrackToTrack(track)}
+                  onPlay={() => handlePlayTrack(track)}
+                  showArtist
+                />
+              ))}
+            </div>
+          )}
+        </section>
+
+        {/* Interest-Based Recommendations */}
+        {userInterests.length > 0 && interestBasedTracks.length > 0 && (
+          <section>
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h2 className="text-3xl font-bold">Based on Your Interests</h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {userInterests.slice(0, 3).join(', ')} {userInterests.length > 3 ? `and ${userInterests.length - 3} more` : ''}
+                </p>
+              </div>
+              <Button variant="ghost" className="font-semibold" asChild>
+                <Link href="/account">Edit Interests →</Link>
+              </Button>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
+              {interestBasedTracks.map((track) => (
+                <SongCard
+                  key={track.id}
+                  track={convertSpotifyTrackToTrack(track)}
+                  onPlay={() => handlePlayTrack(track)}
+                  showArtist
+                />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Recently Played */}
+        <section>
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h2 className="text-3xl font-bold">Recently played</h2>
+              <p className="text-sm text-muted-foreground mt-1">Your listening history</p>
+            </div>
+            <Button variant="ghost" className="font-semibold" asChild>
+              <Link href="/library">Show all →</Link>
+            </Button>
+          </div>
+          {isLoading ? (
+            <div className="flex items-center justify-center py-16 bg-muted/30 rounded-xl">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              <span className="ml-3 text-muted-foreground">Loading music...</span>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
+              {recentlyPlayed.map((track) => (
+                <SongCard
+                  key={track.id}
+                  track={convertSpotifyTrackToTrack(track)}
+                  onPlay={() => handlePlayTrack(track)}
+                  showArtist
+                />
+              ))}
+            </div>
+          )}
+        </section>
+
+        {/* Trending Now */}
+        <section>
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h2 className="text-3xl font-bold">Trending now</h2>
+              <p className="text-sm text-muted-foreground mt-1">Popular tracks right now</p>
+            </div>
+            <Button variant="ghost" className="font-semibold" asChild>
+              <Link href="/search">Explore →</Link>
+            </Button>
+          </div>
+          {isLoading ? (
+            <div className="flex items-center justify-center py-16 bg-muted/30 rounded-xl">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              <span className="ml-3 text-muted-foreground">Loading trending...</span>
+            </div>
+          ) : trending.length > 0 ? (
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
+              {trending.map((track) => (
+                <SongCard
+                  key={track.id}
+                  track={convertSpotifyTrackToTrack(track)}
+                  onPlay={() => handlePlayTrack(track)}
+                  showArtist
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-16 bg-muted/30 rounded-xl">
+              <p className="text-muted-foreground">No trending tracks available</p>
+            </div>
+          )}
+        </section>
+
+        {/* Mood Playlists */}
+        <section>
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h2 className="text-3xl font-bold">Mood Playlists</h2>
+              <p className="text-sm text-muted-foreground mt-1">Curated collections for every emotion</p>
+            </div>
+            <Button variant="ghost" className="font-semibold" asChild>
+              <Link href="/suggest">Explore moods →</Link>
+            </Button>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <Link href="/mood">
+              <Card className="group relative overflow-hidden gradient-bg-coral text-white border-0 cursor-pointer hover:scale-[1.02] transition-all duration-300 shadow-lg hover:shadow-xl h-48">
+                <CardContent className="p-6 h-full flex flex-col justify-between">
+                  <div>
+                    <div className="text-4xl mb-2">😊</div>
+                    <h3 className="text-xl font-bold mb-1">Happy Vibes</h3>
+                    <p className="text-sm text-white/80">Uplifting tracks to brighten your day</p>
+                  </div>
+                  {moodBasedTracks.length > 0 && (
+                    <p className="text-xs text-white/60">{Math.floor(moodBasedTracks.length / 2)} tracks</p>
+                  )}
+                </CardContent>
+              </Card>
+            </Link>
+            
+            <Link href="/mood">
+              <Card className="group relative overflow-hidden gradient-bg-mint text-white border-0 cursor-pointer hover:scale-[1.02] transition-all duration-300 shadow-lg hover:shadow-xl h-48">
+                <CardContent className="p-6 h-full flex flex-col justify-between">
+                  <div>
+                    <div className="text-4xl mb-2">🌊</div>
+                    <h3 className="text-xl font-bold mb-1">Chill Out</h3>
+                    <p className="text-sm text-white/80">Relaxing music for peaceful moments</p>
+                  </div>
+                  {moodBasedTracks.length > 0 && (
+                    <p className="text-xs text-white/60">{Math.ceil(moodBasedTracks.length / 2)} tracks</p>
+                  )}
+                </CardContent>
+              </Card>
+            </Link>
+            
+            <Link href="/suggest">
+              <Card className="group relative overflow-hidden gradient-bg-purple text-white border-0 cursor-pointer hover:scale-[1.02] transition-all duration-300 shadow-lg hover:shadow-xl h-48">
+                <CardContent className="p-6 h-full flex flex-col justify-between">
+                  <div>
+                    <div className="text-4xl mb-2">⚡</div>
+                    <h3 className="text-xl font-bold mb-1">Energetic</h3>
+                    <p className="text-sm text-white/80">High-energy beats to pump you up</p>
+                  </div>
+                </CardContent>
+              </Card>
+            </Link>
+            
+            <Link href="/suggest">
+              <Card className="group relative overflow-hidden gradient-bg-vibrant text-white border-0 cursor-pointer hover:scale-[1.02] transition-all duration-300 shadow-lg hover:shadow-xl h-48">
+                <CardContent className="p-6 h-full flex flex-col justify-between">
+                  <div>
+                    <div className="text-4xl mb-2">😢</div>
+                    <h3 className="text-xl font-bold mb-1">Melancholy</h3>
+                    <p className="text-sm text-white/80">Thoughtful tracks for introspective times</p>
+                  </div>
+                </CardContent>
+              </Card>
+            </Link>
           </div>
         </section>
-      )}
+      </div>
 
-      {/* Recently Played - Second Section */}
-      <section>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-2xl font-bold">Recently played</h2>
-          <Button variant="ghost" asChild>
-            <Link href="/library">Show all</Link>
-          </Button>
-        </div>
-        {isLoading ? (
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-            <span className="ml-2 text-muted-foreground">Loading music...</span>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-            {recentlyPlayed.map((track) => (
-              <SongCard
-                key={track.id}
-                track={convertSpotifyTrackToTrack(track)}
-                onPlay={() => handlePlayTrack(track)}
-                showArtist
-              />
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* Trending - Third Section */}
-      <section>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-2xl font-bold">Trending now</h2>
-          <Button variant="ghost" asChild>
-            <Link href="/search">Explore</Link>
-          </Button>
-        </div>
-        {isLoading ? (
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-            <span className="ml-2 text-muted-foreground">Loading trending...</span>
-          </div>
-        ) : trending.length > 0 ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-            {trending.map((track) => (
-              <SongCard
-                key={track.id}
-                track={convertSpotifyTrackToTrack(track)}
-                onPlay={() => handlePlayTrack(track)}
-                showArtist
-              />
-            ))}
-          </div>
-        ) : (
-          <div className="text-center py-8">
-            <p className="text-muted-foreground">No trending tracks available</p>
-          </div>
-        )}
-      </section>
-
-      {/* Mood Highlights */}
-      <section>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-2xl font-bold">Mood Highlights</h2>
-          <Button variant="ghost" asChild>
-            <Link href="/suggest">Explore moods</Link>
-          </Button>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <Link href="/mood">
-            <Card className="gradient-bg-coral text-white border-0 cursor-pointer hover:scale-105 transition-transform shadow-lg">
-              <CardContent className="p-6 text-center">
-                <h3 className="font-semibold mb-2">Happy Vibes</h3>
-                <p className="text-sm opacity-90">Uplifting tracks to brighten your day</p>
-                {moodBasedTracks.length > 0 && (
-                  <p className="text-xs opacity-70 mt-2">{Math.floor(moodBasedTracks.length / 2)} tracks loaded</p>
-                )}
-              </CardContent>
-            </Card>
-          </Link>
-          
-          <Link href="/mood">
-            <Card className="gradient-bg-mint text-white border-0 cursor-pointer hover:scale-105 transition-transform shadow-lg">
-              <CardContent className="p-6 text-center">
-                <h3 className="font-semibold mb-2">Chill Out</h3>
-                <p className="text-sm opacity-90">Relaxing music for peaceful moments</p>
-                {moodBasedTracks.length > 0 && (
-                  <p className="text-xs opacity-70 mt-2">{Math.ceil(moodBasedTracks.length / 2)} tracks loaded</p>
-                )}
-              </CardContent>
-            </Card>
-          </Link>
-          
-          <Link href="/suggest">
-            <Card className="gradient-bg-purple text-white border-0 cursor-pointer hover:scale-105 transition-transform shadow-lg">
-              <CardContent className="p-6 text-center">
-                <h3 className="font-semibold mb-2">Energetic</h3>
-                <p className="text-sm opacity-90">High-energy beats to pump you up</p>
-              </CardContent>
-            </Card>
-          </Link>
-          
-          <Link href="/suggest">
-            <Card className="gradient-bg-vibrant text-white border-0 cursor-pointer hover:scale-105 transition-transform shadow-lg">
-              <CardContent className="p-6 text-center">
-                <h3 className="font-semibold mb-2">Melancholy</h3>
-                <p className="text-sm opacity-90">Thoughtful tracks for introspective times</p>
-              </CardContent>
-            </Card>
-          </Link>
-        </div>
-      </section>
       <AutoMoodDetector />
     </div>
   );
