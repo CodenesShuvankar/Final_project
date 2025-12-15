@@ -820,10 +820,15 @@ export default function ProfilePage() {
                         happy: '😊', sad: '😢', angry: '😠', neutral: '😐',
                         fear: '😨', disgust: '🤢', surprise: '😲'
                       };
+                      // Vibrant, non-black/white, non-gray palette
                       const moodColors: Record<string, string> = {
-                        happy: '#22c55e', sad: '#3b82f6', angry: '#ef4444',
-                        neutral: '#94a3b8', fear: '#f59e0b', disgust: '#10b981',
-                        surprise: '#8b5cf6'
+                        happy: '#FFB300',    // Vivid Orange
+                        sad: '#1976D2',      // Strong Blue
+                        angry: '#D32F2F',    // Strong Red
+                        neutral: '#43A047',  // Vivid Green
+                        fear: '#8E24AA',     // Deep Purple
+                        disgust: '#388E3C',  // Deep Green
+                        surprise: '#00B8D9'  // Cyan-Teal (changed from yellow)
                       };
                       
                       const sortedMoods = Object.entries(moodCounts).sort(([,a], [,b]) => b - a);
@@ -834,22 +839,19 @@ export default function ProfilePage() {
                         <div className="space-y-6">
                           {/* Donut Chart */}
                           <div className="flex items-center justify-center">
-                            <div className="relative w-64 h-64">
-                              <svg viewBox="0 0 100 100" className="w-full h-full transform -rotate-90" style={{ pointerEvents: 'all' }}>
+                            <div className="relative w-[276px] h-[276px] md:w-[320px] md:h-[320px] drop-shadow-xl">
+                              <svg viewBox="0 0 100 100" className="w-full h-full transform -rotate-90" style={{ pointerEvents: 'all', filter: 'drop-shadow(0 2px 8px rgba(0,0,0,0.18)) drop-shadow(0 0px 2px rgba(0,0,0,0.10))' }}>
                                 {sortedMoods.map(([mood, count], index) => {
                                   const percentage = (count / total) * 100;
                                   const angle = (count / total) * totalAngle;
                                   const startAngle = currentAngle;
                                   currentAngle += angle;
-                                  
                                   // Calculate arc path
                                   const startRad = (startAngle * Math.PI) / 180;
                                   const endRad = (currentAngle * Math.PI) / 180;
                                   const largeArc = angle > 180 ? 1 : 0;
-                                  
-                                  const outerRadius = 45;
-                                  const innerRadius = 28;
-                                  
+                                  const outerRadius = 47.25;
+                                  const innerRadius = 29.4;
                                   const x1 = 50 + outerRadius * Math.cos(startRad);
                                   const y1 = 50 + outerRadius * Math.sin(startRad);
                                   const x2 = 50 + outerRadius * Math.cos(endRad);
@@ -858,7 +860,6 @@ export default function ProfilePage() {
                                   const y3 = 50 + innerRadius * Math.sin(endRad);
                                   const x4 = 50 + innerRadius * Math.cos(startRad);
                                   const y4 = 50 + innerRadius * Math.sin(startRad);
-                                  
                                   const pathData = [
                                     `M ${x1} ${y1}`,
                                     `A ${outerRadius} ${outerRadius} 0 ${largeArc} 1 ${x2} ${y2}`,
@@ -866,23 +867,32 @@ export default function ProfilePage() {
                                     `A ${innerRadius} ${innerRadius} 0 ${largeArc} 0 ${x4} ${y4}`,
                                     'Z'
                                   ].join(' ');
-                                  
-                                  // Check if this emotion is selected or should be dimmed
-                                  const isSelected = isFilterActive('emotion', mood.toLowerCase());
-                                  const isDimmed = dashboardFilter.type && !isSelected;
-                                  
+                                  // Highlight logic: if genre or other non-emotion filter is active, highlight only moods present in filtered set
+                                  let isSelected = isFilterActive('emotion', mood.toLowerCase());
+                                  let isDimmed = false;
+                                  if (dashboardFilter.type && dashboardFilter.type !== 'emotion') {
+                                    // Get filtered moods from dashboardData.filteredEmotionCounts
+                                    const filteredCount = dashboardData.filteredEmotionCounts[mood.toLowerCase()] || 0;
+                                    if (filteredCount === 0) {
+                                      isDimmed = true;
+                                    } else {
+                                      isSelected = true;
+                                    }
+                                  } else if (dashboardFilter.type && !isSelected) {
+                                    isDimmed = true;
+                                  }
                                   return (
                                     <path
                                       key={mood}
                                       d={pathData}
-                                      fill={moodColors[mood.toLowerCase()] || '#94a3b8'}
-                                      style={{ 
-                                        cursor: 'pointer', 
+                                      fill={moodColors[mood.toLowerCase()] || '#43A047'}
+                                      style={{
+                                        cursor: 'pointer',
                                         pointerEvents: 'all',
                                         opacity: isDimmed ? 0.25 : 1,
                                         transition: 'all 0.2s ease',
-                                        stroke: isSelected ? 'white' : 'transparent',
-                                        strokeWidth: isSelected ? 2 : 0
+                                        stroke: isSelected ? '#fff' : 'transparent',
+                                        strokeWidth: isSelected ? 1.2 : 0
                                       }}
                                       onMouseEnter={(e) => { if (!isDimmed) e.currentTarget.style.opacity = '0.8'; }}
                                       onMouseLeave={(e) => { e.currentTarget.style.opacity = isDimmed ? '0.25' : '1'; }}
@@ -906,26 +916,42 @@ export default function ProfilePage() {
                           </div>
                           
                           {/* Legend - Horizontal Button Array */}
-                          <div className="flex gap-2 justify-center overflow-x-auto pb-1">
-                            {sortedMoods.map(([mood, count]) => {
+                          <div className="flex flex-wrap gap-2 justify-center pb-1 max-w-full">
+                            {sortedMoods.map(([mood, count], idx) => {
                               const percentage = Math.round((count / total) * 100);
                               const isSelected = isFilterActive('emotion', mood.toLowerCase());
                               const isDimmed = dashboardFilter.type && !isSelected;
+                              // Mood Compass color scheme
+                              const moodCompassColors: Record<string, string> = {
+                                happy: '#22c55e',
+                                sad: '#3b82f6',
+                                angry: '#f97316',
+                                neutral: '#6366f1',
+                                fear: '#8E24AA',
+                                disgust: '#388E3C',
+                                surprise: '#00B8D9',
+                              };
+                              const color = moodCompassColors[mood.toLowerCase()] || '#6366f1';
                               return (
-                                <button 
+                                <button
                                   key={mood}
                                   type="button"
-                                  className={`flex-shrink-0 flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium transition-all border ${isSelected ? 'bg-primary text-primary-foreground border-primary shadow-md' : 'bg-muted/30 hover:bg-muted/60 border-border'} ${isDimmed ? 'opacity-30' : ''}`}
+                                  className={`flex-shrink-0 flex items-center gap-1 px-4 py-2 rounded-full text-[0.95rem] font-semibold border-2 transition-all duration-150
+                                    ${isSelected
+                                      ? `border-[${color}] bg-[${color}] text-white shadow-md`
+                                      : `border-[${color}] bg-transparent text-[${color}] hover:bg-[${color}] hover:text-white`}
+                                    ${isDimmed ? 'opacity-30' : ''}`}
+                                  style={{ flexBasis: '30%', maxWidth: '33%', minWidth: '110px', boxShadow: isSelected ? `0 2px 8px ${color}33` : undefined }}
                                   onClick={() => toggleFilter('emotion', mood.toLowerCase())}
                                 >
-                                  <div 
-                                    className="w-2 h-2 rounded-full"
-                                    style={{ backgroundColor: isSelected ? 'white' : (moodColors[mood.toLowerCase()] || '#94a3b8') }}
+                                  <div
+                                    className="w-[10.5px] h-[10.5px] rounded-full"
+                                    style={{ backgroundColor: color }}
                                   />
                                   <span className="capitalize whitespace-nowrap">
                                     {moodEmojis[mood.toLowerCase()] || '😊'} {mood}
                                   </span>
-                                  <span className={`${isSelected ? 'text-primary-foreground/80' : 'text-muted-foreground'}`}>
+                                  <span className="ml-1">
                                     {percentage}%
                                   </span>
                                 </button>
@@ -1003,8 +1029,9 @@ export default function ProfilePage() {
 
                       return (
                         <div className="space-y-4">
-                          <div className="relative h-80">
-                            <svg viewBox="0 0 120 120" className="w-full h-full">
+                          <div className="flex flex-col gap-4 sm:flex-row">
+                            <div className="relative h-80 flex-1">
+                              <svg viewBox="0 0 120 120" className="w-full h-full">
                               <defs>
                                 <radialGradient id="compassGlow" cx="50%" cy="50%" r="50%">
                                   <stop offset="0%" stopColor="rgba(255,255,255,0.18)" />
@@ -1057,6 +1084,29 @@ export default function ProfilePage() {
                                 );
                               })}
                             </svg>
+                            </div>
+
+                            <div className="flex sm:flex-col gap-2 text-xs justify-center">
+                              {[
+                                { label: 'Positive', color: 'bg-green-500' },
+                                { label: 'Neutral', color: 'bg-slate-400' },
+                                { label: 'Negative', color: 'bg-red-500' },
+                              ].map((chip) => {
+                                const active = isFilterActive('valenceCategory', chip.label);
+                                const dimmed = dashboardFilter.type && !active && dashboardFilter.type === 'valenceCategory';
+                                return (
+                                  <button
+                                    key={chip.label}
+                                    type="button"
+                                    onClick={() => toggleFilter('valenceCategory', chip.label)}
+                                    className={`flex items-center gap-1.5 px-3 py-2 rounded-full border text-foreground/80 transition ${active ? 'border-primary bg-primary/10' : 'border-border/50 hover:bg-muted/40'} ${dimmed ? 'opacity-40' : ''}`}
+                                  >
+                                    <span className={`w-2 h-2 rounded-full ${chip.color}`}></span>
+                                    {chip.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
                           </div>
 
                           <div className="grid gap-2 sm:grid-cols-2 text-xs">
@@ -1072,28 +1122,6 @@ export default function ProfilePage() {
                                 </div>
                               </div>
                             ))}
-                          </div>
-
-                          <div className="flex flex-wrap gap-2 text-xs justify-center sm:justify-start">
-                            {[
-                              { label: 'Positive', color: 'bg-green-500' },
-                              { label: 'Neutral', color: 'bg-slate-400' },
-                              { label: 'Negative', color: 'bg-red-500' },
-                            ].map((chip) => {
-                              const active = isFilterActive('valenceCategory', chip.label);
-                              const dimmed = dashboardFilter.type && !active && dashboardFilter.type === 'valenceCategory';
-                              return (
-                                <button
-                                  key={chip.label}
-                                  type="button"
-                                  onClick={() => toggleFilter('valenceCategory', chip.label)}
-                                  className={`flex items-center gap-1.5 px-2 py-1 rounded-full border text-foreground/80 transition ${active ? 'border-primary bg-primary/10' : 'border-border/50 hover:bg-muted/40'} ${dimmed ? 'opacity-40' : ''}`}
-                                >
-                                  <span className={`w-2 h-2 rounded-full ${chip.color}`}></span>
-                                  {chip.label}
-                                </button>
-                              );
-                            })}
                           </div>
                         </div>
                       );
