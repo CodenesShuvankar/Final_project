@@ -143,116 +143,99 @@ This diagram shows the end-to-end flow, from user interaction on the frontend to
 
 ## � Dashboard Analytics Architecture
 
-The Profile Dashboard uses a **centralized data architecture** optimized for interactive analytics (similar to Power BI). This ensures efficient performance and enables future filter-based interactions.
 
-### Design Principles
+The Profile Dashboard is built for highly interactive, filter-aware analytics, providing real-time insights into your emotional patterns and music preferences. The architecture is designed for performance, consistency, and extensibility, supporting advanced visualizations and cross-card filtering.
+
+### Key Principles
 
 | Principle | Implementation |
 |-----------|----------------|
-| **Single Source of Truth** | Centralized `EMOTION_VALENCE` mapping and `VALENCE_THRESHOLDS` constants |
-| **Compute Once, Use Everywhere** | `useMemo` hook calculates all derived data when mood history changes |
-| **Ready for Interactivity** | Architecture supports adding date range filters, emotion filters, etc. |
-| **Consistent Classification** | All cards use the same thresholds for Positive/Neutral/Negative |
+| **Single Source of Truth** | Centralized constants for emotion-to-valence/arousal mapping and thresholds |
+| **Efficient Computation** | All derived analytics are computed once with `useMemo` and reused across cards |
+| **Filter-Aware Interactivity** | All dashboard cards (donut, compass, calendar, etc.) react to emotion, genre, and date filters |
+| **Consistent Classification** | All analytics use the same valence/arousal thresholds and mappings |
+| **Visual Feedback** | UI highlights, dims, and animates data points and chart segments based on active filters |
 
-### Valence Mapping
+### Valence & Arousal Mapping
 
-Emotions are mapped to a valence scale from -1 (most negative) to +1 (most positive):
+Emotions are mapped to valence (positivity) and arousal (energy) scores:
 
-| Emotion | Valence | Category |
-|---------|---------|----------|
-| Happy | +0.8 | Positive |
-| Surprise | +0.4 | Positive |
-| Neutral | 0.0 | Neutral |
-| Disgust | -0.6 | Negative |
-| Sad | -0.7 | Negative |
-| Angry | -0.8 | Negative |
-| Fear | -0.9 | Negative |
+| Emotion | Valence | Arousal | Category |
+|---------|---------|---------|----------|
+| Happy   | +0.8    | +0.7    | Positive |
+| Surprise| +0.4    | +0.8    | Positive |
+| Neutral |  0.0    |  0.0    | Neutral  |
+| Disgust | -0.6    | +0.5    | Negative |
+| Sad     | -0.7    | -0.4    | Negative |
+| Angry   | -0.8    | +0.8    | Negative |
+| Fear    | -0.9    | +0.9    | Negative |
 
 **Classification Thresholds:**
 - **Positive**: Valence ≥ +0.3
 - **Neutral**: Valence between -0.3 and +0.3
 - **Negative**: Valence ≤ -0.3
 
-### Centralized Data Flow
+### Centralized Data Flow & Interactivity
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    MOOD HISTORY (Raw Data)                      │
-│         Array of mood detections from /mood-history API         │
-└─────────────────────────────┬───────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────┐
+│                  MOOD HISTORY (Raw Data)                      │
+│      Array of mood detections from /mood-history API          │
+└─────────────────────────────┬─────────────────────────────────┘
                               │
                               ▼
-┌─────────────────────────────────────────────────────────────────┐
-│              useMemo: DASHBOARD DATA (Computed Once)            │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐ │
-│  │ moodWithValence │  │   moodByDate    │  │  emotionCounts  │ │
-│  │ (pre-calculated │  │ (aggregated by  │  │ (frequency per  │ │
-│  │  valence per    │  │  day for        │  │  emotion type)  │ │
-│  │  mood entry)    │  │  calendar)      │  │                 │ │
-│  └─────────────────┘  └─────────────────┘  └─────────────────┘ │
-│                                                                 │
-│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐ │
-│  │  averageValence │  │    last24h      │  │ valenceCategory │ │
-│  │ (overall avg)   │  │ (recent moods,  │  │ (KPI: category, │ │
-│  │                 │  │  avg, count)    │  │  emoji, color)  │ │
-│  └─────────────────┘  └─────────────────┘  └─────────────────┘ │
-│                                                                 │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │                    months                                │   │
-│  │        (pre-generated 6 months for calendar grid)        │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│                                                                 │
-└─────────────────────────────┬───────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────┐
+│      useMemo: DASHBOARD DATA (Computed Once, Filter-Aware)    │
+├───────────────────────────────────────────────────────────────┤
+│ moodWithValence/arousal  │ moodByDate  │ emotionCounts       │
+│ filteredMoods           │ filteredEmotionCounts              │
+│ valenceCategory         │ months (calendar)                  │
+└─────────────────────────────┬─────────────────────────────────┘
                               │
           ┌───────────────────┼───────────────────┐
           │                   │                   │
           ▼                   ▼                   ▼
-┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
-│  Valence        │ │  Valence Trend  │ │  Mood Calendar  │
-│  Category Card  │ │  Line Chart     │ │  Heatmap        │
-│  (uses KPI      │ │  (uses mood     │ │  (uses moodBy   │
-│   data)         │ │   WithValence)  │ │   Date, months) │
-└─────────────────┘ └─────────────────┘ └─────────────────┘
-          │                   │                   │
-          ▼                   ▼                   ▼
-┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
-│  Primary Mood   │ │  Emotion        │ │  Mood Patterns  │
-│  Card           │ │  Distribution   │ │  Analysis       │
-│  (uses emotion  │ │  Donut Chart    │ │                 │
-│   Counts)       │ │                 │ │                 │
-└─────────────────┘ └─────────────────┘ └─────────────────┘
+┌─────────────────┐ ┌────────────────────┐ ┌────────────────────┐
+│ Valence Category│ │ Mood Compass       │ │ Emotion Distribution│
+│ Card            │ │ (Valence–Arousal   │ │ Donut Chart        │
+│ (KPI, traffic-  │ │  Scatter Plot)     │ │ (filter-aware,     │
+│ light color)    │ │ (filter-aware,     │ │  interactive)      │
+└─────────────────┘ │  quadrant color)   │ └────────────────────┘
+          │        └────────────────────┘           │
+          ▼                                         ▼
+┌─────────────────┐                        ┌────────────────────┐
+│ Mood Calendar   │                        │ Top Genres         │
+│ (6-month grid,  │                        │ (genre filter,     │
+│  filter-aware)  │                        │  cross-card sync)  │
+└─────────────────┘                        └────────────────────┘
 ```
 
-### Dashboard Cards
+### Dashboard Cards & Interactivity
 
 | Card | Data Source | Description |
 |------|-------------|-------------|
-| **Valence Category** | `valenceCategory` | KPI showing Positive/Neutral/Negative with traffic-light colors |
-| **Valence Trend** | `moodWithValence` | Line chart showing emotional polarity over last 20 detections |
-| **Mood Calendar** | `moodByDate`, `months` | 6-month heatmap grid (GitHub-style) with daily mood colors |
-| **Primary Mood** | `emotionCounts` | Most frequently detected emotion |
-| **Emotion Distribution** | `emotionCounts` | Donut chart breakdown of all detected emotions |
+| **Valence Category** | `valenceCategory` | KPI showing Positive/Neutral/Negative with color/emoji |
+| **Mood Compass** | `moodWithValence` | Valence–Arousal scatter plot, quadrant color, filter-aware |
+| **Emotion Distribution** | `emotionCounts`, `filteredEmotionCounts` | Donut chart, interactive, highlights/dims by filter |
+| **Mood Calendar** | `moodByDate`, `months` | 6-month heatmap grid, filter-aware, click to filter |
+| **Top Genres** | computed from mood/genre | Genre filter, syncs with all cards |
 
-### Benefits of This Architecture
+### Benefits of the Current Architecture
 
-| Aspect | Before | After |
-|--------|--------|-------|
-| **Calculations** | 6+ duplicate valence computations | 1 computation via `useMemo` |
-| **Re-renders** | Recalculates on every render | Only when `moodHistory` changes |
-| **Consistency** | Scattered threshold definitions | Single `VALENCE_THRESHOLDS` constant |
-| **Extensibility** | Hard to add filters | Ready for date/emotion filters |
-| **Maintainability** | Logic scattered across cards | Centralized in one hook |
+| Aspect | Before | Now |
+|--------|--------|-----|
+| **Calculations** | Redundant, scattered | Centralized, single-pass |
+| **Reactivity** | Manual, inconsistent | All cards update on filter change |
+| **Consistency** | Multiple mappings | Unified valence/arousal logic |
+| **Extensibility** | Hard to add new cards | Easy to add new analytics/cards |
+| **User Experience** | Static, basic | Highly interactive, visually rich |
 
-### Future Interactive Features (Planned)
+### Example Interactions
 
-- **Date Range Filter**: Filter all cards by custom date range
-- **Emotion Filter**: Toggle specific emotions on/off
-- **Analysis Type Filter**: Voice-only, Face-only, or Combined
-- **Cross-Card Interactions**: Click calendar day to filter other charts
-
----
+- Click a donut chart segment to filter all cards by emotion
+- Select a genre in Top Genres to highlight relevant moods in all charts
+- Use Positive/Neutral/Negative chips to filter Mood Compass and donut chart
+- All cards update instantly and visually reflect the active filter
 
 ## �🚀 Getting Started
 
