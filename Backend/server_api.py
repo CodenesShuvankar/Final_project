@@ -121,6 +121,13 @@ async def get_mood_history(
     """Get user's mood detection history"""
     from middleware.supabase_auth import verify_supabase_token
     
+    def _safe_float_convert(value):
+        """Safely convert string or float to float"""
+        try:
+            return float(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+    
     # Verify authentication
     user_id = None
     if authorization and authorization.startswith("Bearer "):
@@ -140,6 +147,8 @@ async def get_mood_history(
             take=limit
         )
         
+        logger.info(f"📊 Fetched {len(mood_history)} mood records for user {user_id[:8]}...")
+        
         return {
             "success": True,
             "history": [
@@ -153,8 +162,8 @@ async def get_mood_history(
                     "face_confidence": mood.face_confidence,
                     "agreement": mood.agreement,
                     "analysis_type": mood.analysis_type,
-                    "valence": float(mood.valence_score) if mood.valence_score else None,
-                    "arousal": float(mood.arousal_score) if mood.arousal_score else None,
+                    "valence": _safe_float_convert(mood.valence_score),
+                    "arousal": _safe_float_convert(mood.arousal_score),
                     "created_at": mood.created_at.isoformat() if mood.created_at else None
                 }
                 for mood in mood_history
@@ -163,6 +172,8 @@ async def get_mood_history(
         }
     except Exception as e:
         logger.error(f"Failed to fetch mood history: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return {
             "success": False,
             "error": str(e),

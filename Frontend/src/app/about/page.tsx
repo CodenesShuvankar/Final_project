@@ -6,7 +6,7 @@ import styles from './about.module.css';
 export default function AboutPage() {
   const teamMembers = [
     {
-      name: "Shuvankar Podder",
+      name: "Shuvankar Dhara",
       role: "Project Lead & Backend Engineer",
       bio: "Leading the VibeTune project with a focus on scalable backend architecture and AI integration.",
       photo: "/team1.jpg",

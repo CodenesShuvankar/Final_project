@@ -171,8 +171,9 @@ export default function ProfilePage() {
     // 1. Add valence to each mood entry
     const moodWithValence = moodHistory.map(m => {
       const moodKey = (m.detected_mood || '').toLowerCase();
-      const valenceFromDb = parseScore((m as any).valence_score);
-      const arousalFromDb = parseScore((m as any).arousal_score);
+      // Backend returns 'valence' and 'arousal' keys
+      const valenceFromDb = parseScore((m as any).valence);
+      const arousalFromDb = parseScore((m as any).arousal);
       const valence = valenceFromDb ?? (EMOTION_VALENCE[moodKey] ?? 0);
       const arousal = arousalFromDb ?? (EMOTION_AROUSAL[moodKey] ?? 0);
       return {

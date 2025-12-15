@@ -31,6 +31,7 @@ export default function MainAppPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [autoDetectionDone, setAutoDetectionDone] = useState(false);
   const [detectedMood, setDetectedMood] = useState<string | null>(null);
+  const [selectedMood, setSelectedMood] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
   
   const spotifyService = SpotifyMusicService.getInstance();
@@ -43,6 +44,30 @@ export default function MainAppPage() {
     if (hour < 12) return 'Good morning';
     if (hour < 18) return 'Good afternoon';
     return 'Good evening';
+  };
+
+  // Fetch mood-based recommendations (can be called from anywhere)
+  const fetchMoodRecommendations = async (mood: string, languages: string[] = ['English']) => {
+    const primaryLanguage = languages[0] || 'English';
+    console.log('🎵 Fetching recommendations for mood:', mood, 'with language:', primaryLanguage);
+    
+    try {
+      // Add language to mood query for better results
+      const searchQuery = `${mood} ${primaryLanguage}`;
+      const moodResult = await spotifyService.getMoodRecommendations(searchQuery, 8);
+      if (moodResult) {
+        setMoodBasedTracks(moodResult.results.tracks);
+        
+        // Cache the recommendations
+        localStorage.setItem(`cached_recommendations_${mood}`, JSON.stringify({
+          tracks: moodResult.results.tracks,
+          timestamp: Date.now()
+        }));
+        console.log('💾 Cached recommendations for mood:', mood, 'in', primaryLanguage);
+      }
+    } catch (error) {
+      console.error('Failed to fetch mood recommendations:', error);
+    }
   };
 
   // Set mounted state to prevent hydration mismatch
@@ -235,25 +260,6 @@ export default function MainAppPage() {
       }
     };
 
-    const fetchMoodRecommendations = async (mood: string, languages: string[] = ['English']) => {
-      const primaryLanguage = languages[0] || 'English';
-      console.log('🎵 Fetching recommendations for mood:', mood, 'with language:', primaryLanguage);
-      
-      // Add language to mood query for better results
-      const searchQuery = `${mood} ${primaryLanguage}`;
-      const moodResult = await spotifyService.getMoodRecommendations(searchQuery, 8);
-      if (moodResult) {
-        setMoodBasedTracks(moodResult.results.tracks);
-        
-        // Cache the recommendations
-        localStorage.setItem(`cached_recommendations_${mood}`, JSON.stringify({
-          tracks: moodResult.results.tracks,
-          timestamp: Date.now()
-        }));
-        console.log('💾 Cached recommendations for mood:', mood, 'in', primaryLanguage);
-      }
-    };
-
     const loadTrendingAndRecent = async () => {
       // Check cache for trending
       const cachedTrending = localStorage.getItem('cached_trending');
@@ -297,9 +303,13 @@ export default function MainAppPage() {
         }
         
         const response = await fetch(`${apiUrl}/recommendations?limit=6`, { headers });
+        console.log('📊 Trending response status:', response.status);
+        
         if (response.ok) {
           const data = await response.json();
-          if (data.success && data.recommendations) {
+          console.log('📊 Trending data:', data);
+          
+          if (data.success && data.recommendations && data.recommendations.length > 0) {
             const tracks = data.recommendations.map((rec: any) => ({
               id: rec.id || rec.track_id || Math.random().toString(),
               name: rec.name || rec.track_name || 'Unknown Track',
@@ -316,24 +326,40 @@ export default function MainAppPage() {
               tracks: tracks,
               timestamp: Date.now()
             }));
-            console.log('💾 Cached trending tracks:', tracks.length);
+            console.log('✅ Cached trending tracks:', tracks.length);
             return;
+          } else {
+            console.log('⚠️ Backend returned no recommendations, using fallback');
           }
+        } else {
+          console.log('⚠️ Backend request failed with status:', response.status);
         }
       } catch (error) {
         console.error('Failed to fetch trending from backend:', error);
       }
       
-      // Fallback to search if recommendations fail
-      const trendingResult = await spotifyService.searchMusic('trending hits 2024', 6);
-      if (trendingResult) {
-        setTrending(trendingResult.tracks);
-        localStorage.setItem('cached_trending', JSON.stringify({
-          tracks: trendingResult.tracks,
-          timestamp: Date.now()
-        }));
-        console.log('💾 Cached trending tracks');
+      // Fallback to multiple search attempts with different queries
+      console.log('🔄 Using Spotify search fallback for trending');
+      const searchQueries = ['top hits 2024', 'popular songs', 'billboard hot 100'];
+      
+      for (const query of searchQueries) {
+        try {
+          const trendingResult = await spotifyService.searchMusic(query, 6);
+          if (trendingResult && trendingResult.tracks && trendingResult.tracks.length > 0) {
+            setTrending(trendingResult.tracks);
+            localStorage.setItem('cached_trending', JSON.stringify({
+              tracks: trendingResult.tracks,
+              timestamp: Date.now()
+            }));
+            console.log('✅ Loaded trending via search:', query, trendingResult.tracks.length);
+            return;
+          }
+        } catch (error) {
+          console.error(`Failed search for "${query}":`, error);
+        }
       }
+      
+      console.error('❌ All trending fallbacks failed');
     };
 
     const fetchRecent = async () => {
@@ -364,19 +390,27 @@ export default function MainAppPage() {
         if (response.ok) {
           const data = await response.json();
           if (data.success && data.history && data.history.length > 0) {
-            const tracks = data.history.map((h: any) => ({
-              id: h.song_id,
-              name: h.song_name,
-              artists: [h.artist_name],
-              album: h.album_name || 'Unknown Album',
-              duration_ms: h.duration_ms || 180000,
-              image_url: h.image_url || null,
-              external_urls: { spotify: h.spotify_url || '#' },
-              preview_url: null
-            }));
+            // Deduplicate by song_id to avoid showing same song multiple times
+            const seenIds = new Set<string>();
+            const uniqueTracks = data.history
+              .filter((h: any) => {
+                if (seenIds.has(h.song_id)) return false;
+                seenIds.add(h.song_id);
+                return true;
+              })
+              .map((h: any) => ({
+                id: h.song_id,
+                name: h.song_name,
+                artists: [h.artist_name],
+                album: h.album_name || 'Unknown Album',
+                duration_ms: h.duration_ms || 180000,
+                image_url: h.image_url || null,
+                external_urls: { spotify: h.spotify_url || '#' },
+                preview_url: null
+              }));
             
-            setRecentlyPlayed(tracks);
-            console.log('✅ Loaded fresh recently played tracks:', tracks.length);
+            setRecentlyPlayed(uniqueTracks.slice(0, 6));
+            console.log('✅ Loaded fresh recently played tracks (deduplicated):', uniqueTracks.length);
             return;
           } else {
             console.log('📭 No listening history found, using fallback');
@@ -656,17 +690,50 @@ export default function MainAppPage() {
           {/* Mood Genre Pills */}
           <div className="flex items-center gap-2 mb-4">
             <h3 className="text-sm font-semibold text-muted-foreground">Browse by mood</h3>
+            {selectedMood && (
+              <button
+                onClick={() => {
+                  setSelectedMood(null);
+                  // Reload default recommendations
+                  const storedMood = localStorage.getItem('detected_mood');
+                  let moodToUse = 'happy';
+                  if (storedMood) {
+                    try {
+                      const parsed = JSON.parse(storedMood);
+                      const age = Date.now() - new Date(parsed.timestamp).getTime();
+                      if (age < 15 * 60 * 1000) {
+                        moodToUse = parsed.mood || 'happy';
+                      }
+                    } catch (error) {
+                      console.error('Failed to parse mood:', error);
+                    }
+                  }
+                  fetchMoodRecommendations(moodToUse, languagePriorities);
+                }}
+                className="text-xs text-muted-foreground hover:text-foreground underline"
+              >
+                Clear filter
+              </button>
+            )}
           </div>
           <div className="flex flex-wrap gap-2">
             {moodGenres.map((genre) => (
-              <Link key={genre.name} href={`/suggest`}>
-                <button
-                  className={`px-4 py-2 rounded-full text-sm font-medium text-white bg-gradient-to-r ${genre.color} hover:scale-105 transition-transform shadow-lg flex items-center gap-2`}
-                >
-                  <span>{genre.icon}</span>
-                  <span>{genre.name}</span>
-                </button>
-              </Link>
+              <button
+                key={genre.name}
+                onClick={async () => {
+                  setSelectedMood(genre.mood);
+                  setDetectedMood(genre.mood);
+                  setIsLoading(true);
+                  await fetchMoodRecommendations(genre.mood, languagePriorities);
+                  setIsLoading(false);
+                }}
+                className={`px-4 py-2 rounded-full text-sm font-medium text-white bg-gradient-to-r ${genre.color} hover:scale-105 transition-transform shadow-lg flex items-center gap-2 ${
+                  selectedMood === genre.mood ? 'ring-2 ring-white ring-offset-2 ring-offset-background' : ''
+                }`}
+              >
+                <span>{genre.icon}</span>
+                <span>{genre.name}</span>
+              </button>
             ))}
           </div>
         </div>
@@ -679,10 +746,10 @@ export default function MainAppPage() {
           <div className="flex items-center justify-between mb-6">
             <div>
               <h2 className="text-3xl font-bold">
-                {detectedMood ? `${detectedMood.charAt(0).toUpperCase() + detectedMood.slice(1)} Vibes` : 'Recommended for You'}
+                {selectedMood ? `${selectedMood.charAt(0).toUpperCase() + selectedMood.slice(1)} Vibes` : detectedMood ? `${detectedMood.charAt(0).toUpperCase() + detectedMood.slice(1)} Vibes` : 'Recommended for You'}
               </h2>
               <p className="text-sm text-muted-foreground mt-1">
-                {detectedMood ? `Music matching your ${detectedMood} mood` : 'Personalized music recommendations'}
+                {selectedMood ? `Music matching your ${selectedMood} mood` : detectedMood ? `Music matching your ${detectedMood} mood` : 'Personalized music recommendations'}
               </p>
             </div>
             <Button variant="ghost" className="font-semibold" asChild>
