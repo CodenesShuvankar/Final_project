@@ -208,9 +208,10 @@ export function MoodDetectorPanel({ onMoodDetected, className, autoDetect = fals
         setStatus("Camera Unavailable - Voice Mode Available");
         setCameraUnavailable(true);
       } else {
-        setError("Permission Denied: Camera/Mic access required");
-        setStatus("Camera Access Denied");
-        setCameraUnavailable(false);
+        // Permission denied - still allow voice-only mode
+        setError("Camera access denied. Click the button below to record voice-only for mood analysis.");
+        setStatus("Voice-Only Mode Available");
+        setCameraUnavailable(true); // Changed from false to true to enable voice-only
       }
       setIsCameraOn(false);
     }
@@ -573,11 +574,20 @@ export function MoodDetectorPanel({ onMoodDetected, className, autoDetect = fals
                 <div className="p-4 bg-zinc-800 rounded-full mb-3 shadow-lg">
                   <CameraOff size={32} className="text-muted-foreground" />
                 </div>
-                <p className="text-sm font-medium text-muted-foreground mb-3">Camera Offline</p>
-                <Button onClick={toggleCamera} disabled={!modelLoaded} size="sm">
-                  <CameraIcon className="mr-2 h-3 w-3" />
-                  {modelLoaded ? 'Start Camera' : 'Loading...'}
-                </Button>
+                <p className="text-sm font-medium text-muted-foreground mb-3">
+                  {cameraUnavailable ? 'Camera Unavailable' : 'Camera Offline'}
+                </p>
+                {!cameraUnavailable && (
+                  <Button onClick={toggleCamera} disabled={!modelLoaded} size="sm">
+                    <CameraIcon className="mr-2 h-3 w-3" />
+                    {modelLoaded ? 'Start Camera' : 'Loading...'}
+                  </Button>
+                )}
+                {cameraUnavailable && (
+                  <p className="text-xs text-muted-foreground text-center px-4">
+                    Use voice-only recording below
+                  </p>
+                )}
               </div>
             )}
 
@@ -643,7 +653,7 @@ export function MoodDetectorPanel({ onMoodDetected, className, autoDetect = fals
               <div className="absolute top-2 left-2 z-50">
                 <Badge variant="secondary" className="text-xs">
                   <Sparkles className="h-3 w-3 mr-1" />
-                  {recordedUrl ? 'Recorded Video' : 'Preview'}
+                  {recordedUrl ? (recordedBlob?.type.includes('audio') ? 'Recorded Audio' : 'Recorded Video') : 'Preview'}
                 </Badge>
               </div>
 
@@ -660,7 +670,7 @@ export function MoodDetectorPanel({ onMoodDetected, className, autoDetect = fals
                   </div>
                   <p className="text-sm text-muted-foreground">No recording yet</p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    {isCameraOn ? 'Click "Start Recording" below' : 'Enable camera first'}
+                    {cameraUnavailable ? 'Click button below for voice-only' : isCameraOn ? 'Click "Start Recording" below' : 'Enable camera first'}
                   </p>
                 </div>
               )}
@@ -717,7 +727,7 @@ export function MoodDetectorPanel({ onMoodDetected, className, autoDetect = fals
               ) : (
                 <>
                   <Mic className="mr-2 h-4 w-4" />
-                  {cameraUnavailable ? 'Record Audio (5s)' : isCameraOn ? 'Start 5s Recording' : 'Enable & Record'}
+                  {cameraUnavailable ? 'Record Voice Only (5s)' : isCameraOn ? 'Start 5s Recording' : 'Enable Camera & Record'}
                 </>
               )}
             </Button>
@@ -790,9 +800,10 @@ export function MoodDetectorPanel({ onMoodDetected, className, autoDetect = fals
         {/* Instructions */}
         <div className="text-xs text-muted-foreground space-y-1 p-3 bg-muted/30 rounded-lg">
           <p className="font-semibold mb-2">💡 How it works:</p>
-          <p>• Click "Enable Camera" to start live face tracking</p>
+          <p>• Click "Enable Camera" to start live face tracking (or use voice-only if unavailable)</p>
           <p>• Choose visualization mode: Mesh (landmarks), Box (outline), or None (clean)</p>
           <p>• Click "Start 5s Recording" to capture video with audio</p>
+          <p>• If camera is blocked, click "Record Voice Only" for audio-based mood detection</p>
           <p>• Review your recording and click "Analyze Video" to detect your mood</p>
           <p>• Get personalized music recommendations based on your emotion</p>
         </div>

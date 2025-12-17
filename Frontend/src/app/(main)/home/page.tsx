@@ -14,7 +14,7 @@ import { HistoryService } from '@/lib/services/historyService';
 import { LikedSongsService } from '@/lib/services/likedSongs';
 import { Lightbulb, Clock, Loader2, Mic, Camera } from 'lucide-react';
 import Link from 'next/link';
-import { AutoMoodDetector } from '@/components/mood/AutoMoodDetector';
+
 import { supabase } from '@/lib/supabaseClient';
 
 /**
@@ -935,7 +935,6 @@ export default function MainAppPage() {
         </section>
       </div>
 
-      <AutoMoodDetector />
     </div>
   );
 }
